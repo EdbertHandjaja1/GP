@@ -132,11 +132,99 @@ class PrincipalComponentGaussianProcessModel:
         Returns:
             self: Fitted model.
         """
-        pass
+        self.X_train = X_train
+        self.X_train_std = self.standardize_inputs(X_train, ranges)
+        self.Y_train_std = self._standardize_output(Y_train)
+        self.K_eta, self.weights = self.compute_principal_components(self.Y_train_std)
+
+        # Define the function for minimization
+        def objective(params):
+            rho = params[:self.n_components * self.input_dim]
+            lambda_w = params[self.n_components * self.input_dim:-1]
+            noise_var = params[-1]
+            return self._negative_log_marginal_likelihood(rho, lambda_w, noise_var)
+
+        initial_params = [
+            self.self.rho.flatten(),
+            self.self.lambda_w,
+            self.np.array([self.noise_var])
+        ]
+
+        result = minimize(
+                fun=objective,
+                x0=initial_params,
+                method='L-BFGS-B',
+                bounds=[(1e-5, None), (1e-5, None), (1e-5, None)] 
+        )
         
+        self.rho.assign(np.reshape(result.x[:self.n_components * self.input_dim], (self.n_components, self.input_dim)))
+        self.lambda_w.assign(result.x[self.n_components * self.input_dim:-1])
+        self.noise_var.assign(result.x[-1])
+
+        return self
 
     def predict(self, X_new, ranges, return_std=False):
-        pass
+        X_new_std = self.standardize_inputs(X_new, ranges)
+        N = self.X_train_std.shape[0]
+        N_test = X_new_std.shape[0]
+        q = self.n_components
+        n = self.output_dim
+
+        # K(X,X) - size (N*q × N*q)
+        K_XX = self._build_kernel_matrix(self.X_train_std)
+        K_XX += tf.eye(N * q, dtype=tf.float64) * 1e-6
+
+        # I_N ⊗ Φ - size (N*n × N*q)
+        I_N = tf.eye(N, dtype=tf.float64)
+        Phi = tf.constant(self.K_eta, dtype=tf.float64)
+        I_N_kron_Phi = self._compute_kronecker_product(I_N, Phi)
+
+        # Σ_YY = (I_N ⊗ Φ) K(X,X) (I_N ⊗ Φ)^T + δ² I_{N*n}
+        Sigma_YY = tf.matmul(I_N_kron_Phi, tf.matmul(K_XX, tf.transpose(I_N_kron_Phi)))
+        Sigma_YY += tf.eye(N * n, dtype=tf.float64) * self.noise_var
+        Sigma_YY += tf.eye(N * n, dtype=tf.float64) * 1e-6
+        L_Sigma_YY = tf.linalg.cholesky(Sigma_YY)
+
+        # K(X*,X) - size (N_test*q × N*q)
+        K_Xnew_X = self._build_kernel_matrix(X_new_std, self.X_train_std)
+
+        # K(X*,X*) - size (N_test*q × N_test*q)
+        K_Xnew_Xnew = self._build_kernel_matrix(X_new_std)
+
+        # Y_cent flattened (N*n × 1)
+        Y_cent_flat = tf.constant(self.Y_train_std.flatten(), dtype=tf.float64)[:, None]
+
+        # μ_w = K(X*,X) (I_N ⊗ Φ)^T Σ_YY^{-1} Y_cent
+        alpha = tf.linalg.cholesky_solve(L_Sigma_YY, Y_cent_flat)
+        mu_w_flat = tf.matmul(K_Xnew_X, tf.matmul(tf.transpose(I_N_kron_Phi), alpha))
+        mu_w = tf.reshape(mu_w_flat, (N_test, q)).numpy()
+
+        # I_Ntest ⊗ Φ - size (N_test*n × N_test*q)
+        I_Ntest = tf.eye(N_test, dtype=tf.float64)
+        I_Ntest_kron_Phi = self._compute_kronecker_product(I_Ntest, Phi)
+
+        # μ_f = Y_bar + (I_Ntest ⊗ Φ) μ_w
+        mu_f_flat = tf.matmul(I_Ntest_kron_Phi, mu_w_flat)
+        mu_f = tf.reshape(mu_f_flat, (N_test, n)).numpy()
+        pred_mean = self._unstandardize_output(mu_f)
+
+        if return_std:
+            # Cov(w|Y) = K(X*,X*) - K(X*,X) (I_N ⊗ Φ)^T Σ_YY^{-1} (I_N ⊗ Φ) K(X,X*)
+            term = tf.matmul(I_N_kron_Phi, K_Xnew_X)
+            alpha_cov = tf.linalg.cholesky_solve(L_Sigma_YY, term)
+            cov_w = K_Xnew_Xnew - tf.matmul(K_Xnew_X, tf.matmul(tf.transpose(I_N_kron_Phi), alpha_cov))
+
+            # Cov(f|Y) = (I_Ntest ⊗ Φ) Cov(w|Y) (I_Ntest ⊗ Φ)^T
+            cov_f = tf.matmul(I_Ntest_kron_Phi, tf.matmul(cov_w, tf.transpose(I_Ntest_kron_Phi)))
+
+            # Cov(y|Y) = Cov(f|Y) + δ² I_{N_test*n}
+            cov_y = cov_f + tf.eye(N_test * n, dtype=tf.float64) * self.noise_var
+
+            pred_var = np.diag(cov_y.numpy()).reshape(N_test, n)
+            pred_std = np.sqrt(pred_var) * self.standardization_scale
+            return pred_mean, pred_std
+        
+        return pred_mean
 
 class GaussianKernel:
     def __init__(self, variance=1.0, rho=None, input_dim=12):
