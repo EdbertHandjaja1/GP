@@ -6,204 +6,158 @@ import matplotlib.pyplot as plt
 
 class PrincipalComponentGaussianProcessModel:
     def __init__(self, n_components=9, input_dim=12, output_dim=28):
-        """
-        Initializes the PCGP model
-        Args:
-            n_components (int): Number of principal components (q).
-            input_dim (int): Dimension of input space (p).
-            output_dim (int): Dimension of output space (n).
-        """
         self.n_components = n_components
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.standardization_mean = None
         self.standardization_scale = None
-        self.K_eta = None
-        self.weights = None
-        self.X_train = None  
-        self.rho = None 
-        self.lambda_w = None 
-    
+        self.K_eta = None  
+        self.weights = None  
+        self.X_train = None
+        self.X_train_std = None
+        self.Y_train_std = None
+        self.rho = np.ones((n_components, input_dim))
+        self.lambda_w = np.ones(n_components) * 1.0
+        self.noise_var = 1e-3
+
     def standardize_inputs(self, X, ranges):
-        """
-        Standardizes inputs to [0,1] range based on parameter bounds.
-        Args:
-            X (np.ndarray): Input design matrix (m x p).
-            ranges (list): List of (min,max) tuples for each parameter.
-        Returns:
-            np.ndarray: Standardized inputs in [0,1]^p.
-        """
         X = np.asarray(X, dtype=np.float64)
         ranges = np.asarray(ranges, dtype=np.float64)
-        
-        # standardize each feature to [0,1] using min-max scaling
         mins = ranges[:, 0]
         maxs = ranges[:, 1]
         ranges_width = maxs - mins
-        
-        # handle cases where range width is zero
-        ranges_width[ranges_width == 0] = 1.0  
-        
+        ranges_width[ranges_width == 0] = 1.0
         X_standardized = (X - mins) / ranges_width
-        
-        # make sure they stay within [0, 1]
-        X_standardized = np.clip(X_standardized, 0.0, 1.0)
-        
-        return X_standardized
-    
-    def _standardize_output(self, Y):
-        """
-        Standardizes simulations
-        Args:
-            Y (np.ndarry): Output matrix (m x n)
-        Returns:
-            np.ndarray: Standardized outputs
-        """
-        # center about mean
-        self.standardization_mean = np.mean(Y, axis=0) 
-        Y_centered = Y - self.standardization_mean
+        return np.clip(X_standardized, 0.0, 1.0)
 
-        # calculate the single scaling value based on the variance
+    def _standardize_output(self, Y):
+        self.standardization_mean = np.mean(Y, axis=0)
+        Y_centered = Y - self.standardization_mean
         self.standardization_scale = np.sqrt(np.mean(Y_centered ** 2))
         if self.standardization_scale == 0:
             self.standardization_scale = 1.0
-
-        # scale output so that its variance is 1
-        Y_standardized = Y_centered / self.standardization_scale
-
-        return Y_standardized
+        return Y_centered / self.standardization_scale
 
     def _unstandardize_output(self, Y_standardized):
-        Y = Y_standardized * self.standardization_scale
-        Y = Y + self.standardization_mean
-
-        return Y
+        return Y_standardized * self.standardization_scale + self.standardization_mean
 
     def compute_principal_components(self, Y_standardized):
-        """
-        Performs SVD to obtain EOF basis vectors
-        Args:
-            Y (np.ndarray): Output matrix (m x n).
-        Returns:
-            np.ndarray: Basis matrix (n x q).
-        """
-        # svd decomp
         y_tensor = tf.convert_to_tensor(Y_standardized, dtype=tf.float64)
-        s, u, v = tf.linalg.svd(tf.convert_to_tensor(y_tensor), full_matrices=False)
-
-        # eof is first q columns of [U * D * sqrt(m)]
-        m = Y_standardized.shape[0]  
+        s, u, v = tf.linalg.svd(y_tensor, full_matrices=False)
+        m = Y_standardized.shape[0]
         K_eta = (u @ tf.linalg.diag(s) / np.sqrt(m))[:, :self.n_components].numpy()
-
-        # component loadings or weight
-        weights = (np.sqrt(m) * v.T).numpy()
-
+        weights = (np.sqrt(m) * tf.transpose(v)).numpy()
         return K_eta, weights
 
-    def _build_kernel_matrix(self):
-        """
-        Constructs the block-diagonal kernel matrix K for all principal components.
-        
-        Returns:
-            np.ndarray: Block-diagonal kernel matrix (m*q, m*q)
-        """
-        K_blocks = []
-        
-        for i in range(self.n_components):
-            variance = 1.0 / self.lambda_w[i]
-            rho = self.rho[i,:]              
+    def _build_kernel_matrix(self, X1, X2=None, component_idx=None):
+        if X2 is None:
+            X2 = X1
             
-            kernel = GaussianKernel(variance=variance, rho=rho)
-            K_i = kernel(self.X_train, self.X_train)  
-            K_blocks.append(K_i)
-        
-        K = scipy.linalg.block_diag(*K_blocks)
-        return K
+        if component_idx is not None:
+            variance = 1.0 / self.lambda_w[component_idx]
+            rho = self.rho[component_idx,:]
+            kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
+            return kernel(X1, X2)
+        else:
+            K_blocks = []
+            for i in range(self.n_components):
+                variance = 1.0 / self.lambda_w[i]
+                rho = self.rho[i,:]
+                kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
+                K_blocks.append(kernel(X1, X2))
+            return scipy.linalg.block_diag(*K_blocks)
 
-    def _negative_log_marginal_likelihood(self, observed_weights, weights, noise_precision):
+    def _compute_kronecker_product(self, A, B):
+        """Compute Kronecker product A ⊗ B using TensorFlow"""
+        # return tf.einsum('ij,kl->ikjl', A, B).numpy().reshape(
+        #     A.shape[0] * B.shape[0], 
+        #     A.shape[1] * B.shape[1]
+        # )
+        return tf.linalg.LinearOperatorKronecker(A, B)
+
+    def _negative_log_marginal_likelihood(self, rho_flattened, lambda_w, noise_var):
         """
-        Calculate the negative log marginal likelihood.
-
+        Calculate the negative log marginal likelihood for PCGP model.
+        
         Args:
-            observed_weights 
-            weights
-            noise_precision
-
+            rho_flattened (np.ndarray): Flattened array of length scales (n_components * input_dim)
+            lambda_w (np.ndarray): Array of precision parameters (n_components)
+            noise_var (float): Noise variance parameter
+            
         Returns:
             float: Negative log marginal likelihood value
         """
-        # w_hat - w
-        w_hat = observed_weights.flatten()
-        w = weights.flatten()
-        residual = w_hat - w
+        # Reshape and update parameters
+        self.rho = np.reshape(rho_flattened, (self.n_components, self.input_dim))
+        self.lambda_w = lambda_w
+        self.noise_var = noise_var
+        
+        m = self.X_train_std.shape[0]  
+        q = self.n_components
+        n = self.output_dim  
 
-        # Q = residual^T * (K^T * K) * residual
-        K = self._build_kernel_matrix()
-        Q = residual.T @ K @ residual
+        # K(X,X) - size (N*q × N*q)
+        K_XX = self._build_kernel_matrix(self.X_train_std)
+        K_XX += tf.eye(m * q, dtype=tf.float64) * 1e-6
 
-        pass
+        # I_N ⊗ Φ - size (N*D × N*q)
+        I_N = tf.eye(m, dtype=tf.float64)
+        Phi = tf.constant(self.K_eta, dtype=tf.float64)
+        I_N_kron_Phi = self._compute_kronecker_product(I_N, Phi)
 
-    def fit(self, X_train, Y_train):
+        # Σ_YY = (I_N ⊗ Φ) K(X,X) (I_N ⊗ Φ)^T + δ² I_{N*D}
+        term1 = tf.matmul(I_N_kron_Phi, tf.matmul(K_XX, tf.transpose(I_N_kron_Phi)))
+        noise_term = tf.eye(m * n, dtype=tf.float64) * self.noise_var
+        Sigma_YY = term1 + noise_term
+        Sigma_YY += tf.eye(m * n, dtype=tf.float64) * 1e-6
+
+        L_Sigma_YY = tf.linalg.cholesky(Sigma_YY)
+
+        log_det = 2.0 * tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L_Sigma_YY)))
+        Y_flat = tf.constant(self.Y_train_std.flatten(), dtype=tf.float64)[:, None]
+        alpha = tf.linalg.cholesky_solve(L_Sigma_YY, Y_flat)
+        data_fit = tf.squeeze(tf.matmul(tf.transpose(Y_flat), alpha))
+        constant = 0.5 * m * n * tf.math.log(2.0 * np.pi)
+
+        return (0.5 * data_fit + 0.5 * log_det + constant).numpy()
+
+
+    def fit(self, X_train, Y_train, ranges):
         """
-        Fits the PCGP model to training data using MCMC.
+        Fits the PCGP model to training data
         Args:
             X_train (np.ndarray): Input design matrix (m x p).
             Y_train (np.ndarray): Output matrix (m x n).
-            n_mcmc (int): Number of MCMC samples.
+            ranges (list): List of (min,max) tuples for each parameter for standardizing inputs.
         Returns:
             self: Fitted model.
         """
-        Y_standardized = self._standardize_output(Y_train)
-        self.K_eta, self.weights = self.compute_principal_components(Y_standardized)
         pass
+        
 
-
-    def predict(self, X_new, return_std=False):
-        """
-        Predicts outputs for new inputs with uncertainty.
-        Args:
-            X_new (np.ndarray): New input points (k x p).
-            return_std (bool): Whether to return std deviation.
-        Returns:
-            np.ndarray: Predicted means (k x n).
-            (optional) np.ndarray: Predicted std deviations (k x n).
-        """
+    def predict(self, X_new, ranges, return_std=False):
+        pass
 
 class GaussianKernel:
     def __init__(self, variance=1.0, rho=None, input_dim=12):
-        """
-        The Gaussian covariance function.
-        Args:
-            variance: λ_wi^{-1} (precision-adjusted variance for PC i)
-            rho: Vector of ρ_{i1}, ..., ρ_{ip} (per-dimension correlations)
-            p: Input dimension
-        """
-        self.variance = tf.Variable(variance, name="variance", dtype=tf.float64)
-        self.rho = tf.Variable(rho if rho is not None else tf.ones(input_dim, dtype=tf.float64))
+        self.variance = tf.Variable(variance, dtype=tf.float64)
+        self.rho = tf.Variable(rho if rho is not None else tf.ones(input_dim, dtype=tf.float64), dtype=tf.float64)
 
     def __call__(self, X1, X2):
-        """
-        Computes the covariance matrix between X1 and X2
-        Args:
-            X1: Array of shape (n_samples_1, n_features).
-            X2: Array of shape (n_samples_2, n_features).
-        Returns:
-            Covariance matrix of shape (n_samples_1, n_samples_2).
-        """
-        sq_diff = tf.square(X1[:, None] - X2)
+        X1 = tf.cast(X1, dtype=tf.float64)
+        X2 = tf.cast(X2, dtype=tf.float64)
+        rho_safe = tf.where(self.rho > 1e-6, self.rho, 1e-6)
+        scaled_sq_diff = tf.square(X1[:, None] - X2) / tf.square(rho_safe)
+        exponent = -0.5 * tf.reduce_sum(scaled_sq_diff, axis=-1)
+        return self.variance * tf.exp(exponent)
 
-        rho_factors = tf.pow(self.rho, 4.0 * sq_diff)
-
-        R = tf.reduce_prod(rho_factors, axis=-1)
-
-        return self.variance * R
-    
     def set_hyperparameters(self, variance, rho=None):
         """
         Updates kernel hyperparameters.
         Args:
             variance (float): New signal variance.
-            length_scale (float): New length scale.
+            rho (np.ndarray): New length scales (rho).
         """
         self.variance.assign(variance)
-        self.rho.assign(rho)
+        if rho is not None:
+            self.rho.assign(rho)
