@@ -174,6 +174,12 @@ class PrincipalComponentGaussianProcessModel:
         self.lambda_w = opt_params[self.n_components * self.input_dim:-1]
         self.noise_var = opt_params[-1]
 
+        for i in range(self.n_components):
+            print(f"Component {i+1}:")
+            print(f"  Length scales (ρ): {self.rho[i]}")
+            print(f"  Precision (λ): {self.lambda_w[i]:.4f}")
+        print(f"Noise variance: {self.noise_var:.6f}")
+
         return self
 
     def predict(self, X_new, ranges, return_std=False):
@@ -303,9 +309,9 @@ def generate_test_data(n_train=50, n_test=20, input_dim=3, output_dim=5):
     Y_train += np.random.normal(0, 0.1, Y_train.shape)
     
     X_test = np.random.uniform(0, 1, (n_test, input_dim))
-    Y_test = true_func(X_test) # Y_test here is noiseless true values
+    Y_test = true_func(X_test) 
     
-    return X_train, Y_train, X_test, Y_test, ranges, true_func # Also return true_func
+    return X_train, Y_train, X_test, Y_test, ranges, true_func 
 
 n_train_val = 50
 input_dim_val = 3
@@ -316,58 +322,47 @@ print("Fitting your PCGP model...")
 your_pcgp = PrincipalComponentGaussianProcessModel(n_components=3, input_dim=X_train.shape[1], output_dim=Y_train.shape[1])
 your_pcgp.fit(X_train, Y_train, ranges)
 
-# --- New Plotting Logic ---
-
-# Which input dimension to vary for the plot (e.g., the first input dimension)
-input_to_vary_idx = 0 
-# Which output dimension to plot
-output_to_plot = 0 
-
-# Generate X_test for plotting: vary one dimension, keep others fixed (e.g., at their mean or a specific value)
-num_plot_points = 200
-x_min, x_max = ranges[input_to_vary_idx]
-X_plot = np.zeros((num_plot_points, input_dim_val))
-
-# Create a linspace for the chosen input dimension
-X_plot[:, input_to_vary_idx] = np.linspace(x_min, x_max, num_plot_points)
-
-# For other input dimensions, fix them to a representative value (e.g., the mean of X_train for that dim)
-for i in range(input_dim_val):
-    if i != input_to_vary_idx:
-        X_plot[:, i] = np.mean(X_train[:, i]) # Or you could choose 0.5, or a specific value
 
 
-# Get predictions from your PCGP model on the new X_plot
-your_pred_mean, your_pred_std = your_pcgp.predict(X_plot, ranges, return_std=True)
+# input dimension
+input_to_vary_idx = 1
 
-# Get the true function values for the plot
-Y_true_plot = true_func_global(X_plot)
+for output_idx in range(output_dim_val):
+    num_plot_points = 200
+    x_min, x_max = ranges[input_to_vary_idx]
+    X_plot = np.zeros((num_plot_points, input_dim_val))
 
+    X_plot[:, input_to_vary_idx] = np.linspace(x_min, x_max, num_plot_points)
 
-plt.figure(figsize=(10, 6))
+    for dim_idx in range(input_dim_val): 
+        if dim_idx != input_to_vary_idx:
+            X_plot[:, dim_idx] = np.mean(X_train[:, dim_idx])
 
-# Plot training observations
-plt.plot(X_train[:, input_to_vary_idx], Y_train[:, output_to_plot], 'kx', alpha=0.6, label='Training Observations')
+    your_pred_mean, your_pred_std = your_pcgp.predict(X_plot, ranges, return_std=True)
 
-# Plot predicted mean
-plt.plot(X_plot[:, input_to_vary_idx], your_pred_mean[:, output_to_plot], 'b-', label='Predicted mean')
+    Y_true_plot = true_func_global(X_plot)
 
-# Plot true function (noiseless)
-plt.plot(X_plot[:, input_to_vary_idx], Y_true_plot[:, output_to_plot], 'r-', alpha=0.6, label='True function')
+    plt.figure(figsize=(10, 6))
 
-# Plot 95% Confidence Interval
-mean_np = your_pred_mean[:, output_to_plot]
-std_np = your_pred_std[:, output_to_plot]
+    plt.plot(X_train[:, input_to_vary_idx], Y_train[:, output_idx], 'kx', alpha=0.6, label='Training Observations')
 
-plt.fill_between(X_plot[:, input_to_vary_idx].flatten(),
-                 (mean_np - 2 * std_np),
-                 (mean_np + 2 * std_np),
-                 alpha=0.2, color='blue', label='95% Confidence Interval')
+    plt.plot(X_plot[:, input_to_vary_idx], your_pred_mean[:, output_idx], 'b-', label='Predicted mean')
 
-plt.xlabel(f'Input X (Dimension {input_to_vary_idx})')
-plt.ylabel(f'Output Y (Dimension {output_to_plot})')
-plt.title(f'Your PCGP Regression (Output {output_to_plot})')
-plt.legend()
-plt.grid(True, linestyle='--', alpha=0.7)
+    plt.plot(X_plot[:, input_to_vary_idx], Y_true_plot[:, output_idx], 'r-', alpha=0.6, label='True function')
+
+    mean_np = your_pred_mean[:, output_idx]
+    std_np = your_pred_std[:, output_idx]
+
+    plt.fill_between(X_plot[:, input_to_vary_idx].flatten(),
+                    (mean_np - 2 * std_np),
+                    (mean_np + 2 * std_np),
+                    alpha=0.2, color='blue', label='95% Confidence Interval')
+
+    plt.xlabel(f'Input X (Dimension {input_to_vary_idx})')
+    plt.ylabel(f'Output Y (Dimension {output_idx})')
+    plt.title(f'Your PCGP Regression (Output {output_idx})')
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.7)
+
 plt.tight_layout()
 plt.show()
