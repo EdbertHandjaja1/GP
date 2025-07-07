@@ -1,10 +1,9 @@
+
 import numpy as np
 import tensorflow as tf
 import scipy as scipy
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
-# from surmise.emulation import emulator
-# from surmise.calibration import calibrator
 
 class PrincipalComponentGaussianProcessModel:
     def __init__(self, n_components=9, input_dim=12, output_dim=28):
@@ -13,12 +12,12 @@ class PrincipalComponentGaussianProcessModel:
         self.output_dim = output_dim
         self.standardization_mean = None
         self.standardization_scale = None
-        self.K_eta_scores = None 
-        self.Phi_basis = None    
+        self.K_eta_scores = None
+        self.Phi_basis = None
         self.X_train = None
         self.X_train_std = None
         self.Y_train_std = None
-        self.rho = np.ones((n_components, input_dim))
+        self.rho = np.ones((n_components, input_dim)) * 0.1
         self.lambda_w = np.ones(n_components) * 1.0
         self.noise_var = 1e-3
 
@@ -45,75 +44,75 @@ class PrincipalComponentGaussianProcessModel:
 
     def compute_principal_components(self, Y_standardized):
         y_tensor = tf.convert_to_tensor(Y_standardized, dtype=tf.float64)
-        s, u, v = tf.linalg.svd(y_tensor, full_matrices=False) 
-
-        K_eta_scores = (u @ tf.linalg.diag(s))[:, :self.n_components].numpy()
-        Phi_basis = v[:, :self.n_components].numpy() # shape (n, q)
-
+        s, u, v = tf.linalg.svd(y_tensor, full_matrices=False)
+        
+        actual_components = min(self.n_components, s.shape[0], v.shape[0])
+        
+        K_eta_scores = (u @ tf.linalg.diag(s))[:, :actual_components].numpy()
+        Phi_basis = tf.transpose(v[:actual_components, :]).numpy()  # Transpose to get (output_dim, n_components)
+        
         return K_eta_scores, Phi_basis
 
     def _build_kernel_matrix(self, X1, X2=None, component_idx=None):
         if X2 is None:
             X2 = X1
-            
+
         if component_idx is not None:
             variance = 1.0 / self.lambda_w[component_idx]
-            rho = self.rho[component_idx,:]
+            rho = self.rho[component_idx, :]
             kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
             return kernel(X1, X2)
         else:
             K_blocks = []
             for i in range(self.n_components):
                 variance = 1.0 / self.lambda_w[i]
-                rho = self.rho[i,:]
+                rho = self.rho[i, :]
                 kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
                 K_blocks.append(kernel(X1, X2))
             return scipy.linalg.block_diag(*K_blocks)
 
-    def _compute_kronecker_product(self, A, B):
-        """Compute Kronecker product A ⊗ B as dense matrix"""
-        A = tf.convert_to_tensor(A, dtype=tf.float64)
-        B = tf.convert_to_tensor(B, dtype=tf.float64)
-        return tf.einsum('ij,kl->ikjl', A, B).numpy().reshape(
-            A.shape[0] * B.shape[0], 
-            A.shape[1] * B.shape[1]
-        )
+    def _tf_kron(self, A, B):
+        """
+        Computes the Kronecker product of two matrices A and B using TensorFlow.
+        """
+        s1, s2 = A.shape
+        s3, s4 = B.shape
+        return tf.reshape(tf.einsum('ij,kl->ikjl', A, B), [s1 * s3, s2 * s4])
+
 
     def _negative_log_marginal_likelihood(self, rho_flattened, lambda_w, noise_var):
         """
         Calculate the negative log marginal likelihood for PCGP model.
-        
+
         Args:
             rho_flattened (np.ndarray): Flattened array of length scales (n_components * input_dim)
             lambda_w (np.ndarray): Array of precision parameters (n_components)
             noise_var (float): Noise variance parameter
-            
+
         Returns:
             float: Negative log marginal likelihood value
         """
         self.rho = np.reshape(rho_flattened, (self.n_components, self.input_dim))
         self.lambda_w = lambda_w
         self.noise_var = noise_var
-        
-        m = self.X_train_std.shape[0]  
+
+        m = self.X_train_std.shape[0] 
         q = self.n_components
-        n = self.output_dim  
+        n = self.output_dim 
 
-        # K(X,X) - size (N*q × N*q) 
-        K_XX = self._build_kernel_matrix(self.X_train_std)
+        Phi_tf = tf.constant(self.Phi_basis, dtype=tf.float64) # (n x q)
 
-        # I_N ⊗ Φ - size (N*n × N*q)
-        I_N = tf.eye(m, dtype=tf.float64)
-        Phi_basis_tf = tf.constant(self.Phi_basis, dtype=tf.float64) 
-        I_N_kron_Phi = self._compute_kronecker_product(I_N, Phi_basis_tf) 
+        Sigma_YY = tf.zeros((m * n, m * n), dtype=tf.float64)
+        for j in range(q):
+            K_j_XX = self._build_kernel_matrix(self.X_train_std, component_idx=j) # (m x m)
 
-        # Σ_YY = (I_N ⊗ Φ) K(X,X) (I_N ⊗ Φ)^T + δ² I_{N*D}
-        term1 = tf.matmul(I_N_kron_Phi, tf.matmul(K_XX, tf.transpose(I_N_kron_Phi)))
-        
-        # Noise term: I_{N*D} should be (m*n, m*n)
-        noise_term = tf.eye(m * n, dtype=tf.float64) * self.noise_var 
-        
-        Sigma_YY = term1 + noise_term
+            Phi_j = Phi_tf[:, j][:, None] # (n x 1)
+
+            term_j = self._tf_kron(tf.matmul(Phi_j, tf.transpose(Phi_j)), K_j_XX) # (mn x mn)
+            Sigma_YY += term_j
+
+        noise_term = tf.eye(m * n, dtype=tf.float64) * self.noise_var
+        Sigma_YY += noise_term 
 
         L_Sigma_YY = tf.linalg.cholesky(Sigma_YY)
 
@@ -121,11 +120,11 @@ class PrincipalComponentGaussianProcessModel:
         Y_flat = tf.constant(self.Y_train_std.flatten(), dtype=tf.float64)[:, None]
         alpha = tf.linalg.cholesky_solve(L_Sigma_YY, Y_flat)
         data_fit = tf.squeeze(tf.matmul(tf.transpose(Y_flat), alpha))
-        
-        constant_val = 0.5 * m * n * np.log(2.0 * np.pi) 
-        
-        return (tf.cast(0.5, dtype=tf.float64) * data_fit + 
-                tf.cast(0.5, dtype=tf.float64) * log_det + 
+
+        constant_val = 0.5 * m * n * np.log(2.0 * np.pi)
+
+        return (tf.cast(0.5, dtype=tf.float64) * data_fit +
+                tf.cast(0.5, dtype=tf.float64) * log_det +
                 tf.cast(constant_val, dtype=tf.float64)).numpy()
 
 
@@ -142,37 +141,39 @@ class PrincipalComponentGaussianProcessModel:
         self.X_train = X_train
         self.X_train_std = self.standardize_inputs(X_train, ranges)
         self.Y_train_std = self._standardize_output(Y_train)
-        self.K_eta_scores, self.Phi_basis = self.compute_principal_components(self.Y_train_std) 
+        self.K_eta_scores, self.Phi_basis = self.compute_principal_components(self.Y_train_std)
 
-        # function for minimization
         def objective(params):
-            rho_flattened = params[:self.n_components * self.input_dim]
-            lambda_w = params[self.n_components * self.input_dim : self.n_components * self.input_dim + self.n_components]
-            noise_var = params[-1]
+            rho_flattened = np.exp(params[:self.n_components * self.input_dim])
+            lambda_w = np.exp(params[self.n_components * self.input_dim : self.n_components * self.input_dim + self.n_components])
+            noise_var = np.exp(params[-1])
             return self._negative_log_marginal_likelihood(rho_flattened, lambda_w, noise_var)
 
+        initial_rho_log = np.log(self.rho.flatten())
+        initial_lambda_w_log = np.log(self.lambda_w)
+        initial_noise_var_log = np.log(self.noise_var)
+
         initial_params_flat = np.concatenate([
-            self.rho.flatten(),
-            self.lambda_w,
-            np.array([self.noise_var])
+            initial_rho_log,
+            initial_lambda_w_log,
+            np.array([initial_noise_var_log])
         ])
 
-        bounds = [(1e-5, None)] * (self.n_components * self.input_dim) + \
-                [(1e-5, None)] * self.n_components + \
-                [(1e-5, None)]  
+        bounds = [(None, None)] * len(initial_params_flat)
 
         result = minimize(
                 fun=objective,
-                x0=initial_params_flat, 
+                x0=initial_params_flat,
                 method='L-BFGS-B',
-                bounds=bounds
+                bounds=bounds,
+                options={'disp': False, 'maxiter': 1000}
         )
-        
+
         opt_params = result.x
-        self.rho = np.reshape(opt_params[:self.n_components * self.input_dim], 
-                            (self.n_components, self.input_dim))
-        self.lambda_w = opt_params[self.n_components * self.input_dim:-1]
-        self.noise_var = opt_params[-1]
+        self.rho = np.exp(np.reshape(opt_params[:self.n_components * self.input_dim],
+                            (self.n_components, self.input_dim)))
+        self.lambda_w = np.exp(opt_params[self.n_components * self.input_dim:-1])
+        self.noise_var = np.exp(opt_params[-1])
 
         for i in range(self.n_components):
             print(f"Component {i+1}:")
@@ -185,77 +186,72 @@ class PrincipalComponentGaussianProcessModel:
     def predict(self, X_new, ranges, return_std=False):
         """
         Makes predictions using the fitted PCGP model.
-        
+
         Args:
             X_new (np.ndarray): New input locations to predict at (m_test x p).
             ranges (list): List of (min,max) tuples for each parameter for standardizing inputs.
             return_std (bool): If True, returns both mean and standard deviation of predictions.
-            
+
         Returns:
             np.ndarray: Predicted mean values at X_new (m_test x n).
             (np.ndarray, np.ndarray): If return_std=True, returns tuple of (mean, std) where std has shape (m_test x n).
         """
         X_new_std = self.standardize_inputs(X_new, ranges)
-        N = self.X_train_std.shape[0] 
-        N_test = X_new_std.shape[0]  
+        N = self.X_train_std.shape[0]
+        N_test = X_new_std.shape[0] 
         q = self.n_components
-        n = self.output_dim
+        n = self.output_dim 
 
-        # K(X,X) - size (N*q × N*q)
-        K_XX = self._build_kernel_matrix(self.X_train_std)
-        K_XX += tf.eye(N * q, dtype=tf.float64) * 1e-6
+        Sigma_YY = tf.zeros((N * n, N * n), dtype=tf.float64)
+        Phi_tf = tf.constant(self.Phi_basis, dtype=tf.float64)
 
-        # I_N ⊗ Φ (for training data) - size (N*n × N*q)
-        I_N = tf.eye(N, dtype=tf.float64)
-        Phi_basis_tf = tf.constant(self.Phi_basis, dtype=tf.float64)
-        I_N_kron_Phi = self._compute_kronecker_product(I_N, Phi_basis_tf)
-
-        # Σ_YY = (I_N ⊗ Φ) K(X,X) (I_N ⊗ Φ)^T + δ² I_{N*n}
-        Sigma_YY = tf.matmul(I_N_kron_Phi, tf.matmul(K_XX, tf.transpose(I_N_kron_Phi)))
+        for j in range(q):
+            K_j_XX = self._build_kernel_matrix(self.X_train_std, component_idx=j)
+            Phi_j = Phi_tf[:, j][:, None]
+            term_j = self._tf_kron(tf.matmul(Phi_j, tf.transpose(Phi_j)), K_j_XX)
+            Sigma_YY += term_j
         Sigma_YY += tf.eye(N * n, dtype=tf.float64) * self.noise_var
-        Sigma_YY += tf.eye(N * n, dtype=tf.float64) * 1e-6 # Jitter
         L_Sigma_YY = tf.linalg.cholesky(Sigma_YY)
 
-        # K(X*,X) - size (N_test*q × N*q)
-        K_Xnew_X = self._build_kernel_matrix(X_new_std, self.X_train_std)
-
-        # K(X*,X*) - size (N_test*q × N_test*q)
-        K_Xnew_Xnew = self._build_kernel_matrix(X_new_std)
-
-        # Y_cent flattened (N*n × 1)
         Y_cent_flat = tf.constant(self.Y_train_std.flatten(), dtype=tf.float64)[:, None]
 
-        # α = Σ_YY^{-1} Y_cent
         alpha = tf.linalg.cholesky_solve(L_Sigma_YY, Y_cent_flat)
 
-        # μ_w_flat = K(X*,X) (I_N ⊗ Φ)^T α
-        mu_w_flat = tf.matmul(K_Xnew_X, tf.matmul(tf.transpose(I_N_kron_Phi), alpha))
-        mu_w = tf.reshape(mu_w_flat, (N_test, q)).numpy() 
+        K_XnewX_matrix = tf.zeros((N_test * n, N * n), dtype=tf.float64)
 
-        # I_Ntest ⊗ Φ - size (N_test*n × N_test*q)
-        I_Ntest = tf.eye(N_test, dtype=tf.float64)
-        I_Ntest_kron_Phi = self._compute_kronecker_product(I_Ntest, Phi_basis_tf) 
+        for j in range(q):
+            K_j_XnewX = self._build_kernel_matrix(X_new_std, self.X_train_std, component_idx=j) # (N_test x N)
+            Phi_j = Phi_tf[:, j][:, None]
+            term_j = self._tf_kron(tf.matmul(Phi_j, tf.transpose(Phi_j)), K_j_XnewX)
+            K_XnewX_matrix += term_j
 
-        # μ_f = (I_Ntest ⊗ Φ) μ_w_flat 
-        mu_f_flat = tf.matmul(I_Ntest_kron_Phi, mu_w_flat)
-        mu_f = tf.reshape(mu_f_flat, (N_test, n)).numpy()
-        pred_mean = self._unstandardize_output(mu_f)
+        mu_f_flat_std = tf.matmul(K_XnewX_matrix, alpha)
+        mu_f_std = tf.reshape(mu_f_flat_std, (N_test, n)).numpy()
+        pred_mean = self._unstandardize_output(mu_f_std)
 
         if return_std:
-            K_ff = tf.matmul(I_Ntest_kron_Phi, tf.matmul(K_Xnew_Xnew, tf.transpose(I_Ntest_kron_Phi)))
-            
-            K_fF = tf.matmul(I_Ntest_kron_Phi, tf.matmul(K_Xnew_X, tf.transpose(I_N_kron_Phi)))
+            # Calculate K(X*,X*)
+            K_XnewXnew_matrix = tf.zeros((N_test * n, N_test * n), dtype=tf.float64)
+            for j in range(q):
+                K_j_XnewXnew = self._build_kernel_matrix(X_new_std, component_idx=j) # (N_test x N_test)
+                Phi_j = Phi_tf[:, j][:, None]
+                term_j = self._tf_kron(tf.matmul(Phi_j, tf.transpose(Phi_j)), K_j_XnewXnew)
+                K_XnewXnew_matrix += term_j
 
-            alpha_cov_term = tf.linalg.cholesky_solve(L_Sigma_YY, tf.transpose(K_fF)) 
+            K_fF = K_XnewX_matrix
+            K_ff = K_XnewXnew_matrix
 
-            cov_f = K_ff - tf.matmul(K_fF, alpha_cov_term)
-            
+            v = tf.linalg.cholesky_solve(L_Sigma_YY, tf.transpose(K_fF))
+
+            cov_f = K_ff - tf.matmul(K_fF, v)
+
             cov_y = cov_f + tf.eye(N_test * n, dtype=tf.float64) * self.noise_var
 
             pred_var = np.diag(cov_y.numpy()).reshape(N_test, n)
+            pred_var = np.maximum(pred_var, 0) 
             pred_std = np.sqrt(pred_var) * self.standardization_scale
             return pred_mean, pred_std
-        
+
         return pred_mean
 
 class GaussianKernel:
@@ -266,36 +262,32 @@ class GaussianKernel:
     def __call__(self, X1, X2):
         X1 = tf.cast(X1, dtype=tf.float64)
         X2 = tf.cast(X2, dtype=tf.float64)
+
         rho_safe = tf.where(self.rho > 1e-6, self.rho, 1e-6)
-        scaled_sq_diff = tf.square(X1[:, None] - X2) / tf.square(rho_safe)
+
+        scaled_sq_diff = tf.square(X1[:, None, :] - X2[None, :, :]) / tf.square(rho_safe[None, None, :])
         exponent = -0.5 * tf.reduce_sum(scaled_sq_diff, axis=-1)
         return self.variance * tf.exp(exponent)
 
     def set_hyperparameters(self, variance, rho=None):
-        """
-        Updates kernel hyperparameters.
-        Args:
-            variance (float): New signal variance.
-            rho (np.ndarray): New length scales (rho).
-        """
         self.variance.assign(variance)
         if rho is not None:
             self.rho.assign(rho)
 
 
-# AI GENERATED TEST
+# AI GENERATED TEST (re-run with fixed class)
 def generate_test_data(n_train=50, n_test=20, input_dim=3, output_dim=5):
     np.random.seed(42)
-    
+
     X_train = np.random.uniform(0, 1, (n_train, input_dim))
     ranges = [(0, 1)] * input_dim
-    
+
     def true_func(x):
         y1 = (x**2).sum(axis=1)
         y2 = np.sin(x[:, 0]*10) + np.cos(x[:, 1]*5)
         y3 = np.exp(x[:, 2])
         y_outputs = [y1, y2, y3]
-        
+
         if output_dim > len(y_outputs):
             for i in range(len(y_outputs), output_dim):
                 y_outputs.append(np.sin(x[:, (i % input_dim)] * (i + 1) * 5))
@@ -303,38 +295,39 @@ def generate_test_data(n_train=50, n_test=20, input_dim=3, output_dim=5):
             y_outputs = y_outputs[:output_dim]
 
         return np.stack(y_outputs, axis=1)
-    
+
     Y_train = true_func(X_train)
-    
-    Y_train += np.random.normal(0, 0.1, Y_train.shape)
-    
+
+    Y_train += np.random.normal(0, 0.05, Y_train.shape) # Reduced noise for clearer results
+
     X_test = np.random.uniform(0, 1, (n_test, input_dim))
-    Y_test = true_func(X_test) 
-    
-    return X_train, Y_train, X_test, Y_test, ranges, true_func 
+    Y_test = true_func(X_test)
+
+    return X_train, Y_train, X_test, Y_test, ranges, true_func
 
 n_train_val = 50
 input_dim_val = 3
-output_dim_val = 5 
+output_dim_val = 5
 X_train, Y_train, X_test_dummy, Y_test_dummy, ranges, true_func_global = generate_test_data(n_train=n_train_val, input_dim=input_dim_val, output_dim=output_dim_val)
 
 print("Fitting your PCGP model...")
-your_pcgp = PrincipalComponentGaussianProcessModel(n_components=3, input_dim=X_train.shape[1], output_dim=Y_train.shape[1])
+your_pcgp = PrincipalComponentGaussianProcessModel(n_components=min(output_dim_val, X_train.shape[0]-1), input_dim=X_train.shape[1], output_dim=Y_train.shape[1])
 your_pcgp.fit(X_train, Y_train, ranges)
 
 
-
 # input dimension
-input_to_vary_idx = 1
+input_to_vary_idx = 1 # Let's vary the second input dimension
 
 for output_idx in range(output_dim_val):
     num_plot_points = 200
     x_min, x_max = ranges[input_to_vary_idx]
     X_plot = np.zeros((num_plot_points, input_dim_val))
 
+    # Set the input dimension to vary
     X_plot[:, input_to_vary_idx] = np.linspace(x_min, x_max, num_plot_points)
 
-    for dim_idx in range(input_dim_val): 
+    # Set other input dimensions to their training data mean
+    for dim_idx in range(input_dim_val):
         if dim_idx != input_to_vary_idx:
             X_plot[:, dim_idx] = np.mean(X_train[:, dim_idx])
 
@@ -344,12 +337,16 @@ for output_idx in range(output_dim_val):
 
     plt.figure(figsize=(10, 6))
 
+    # Plot training observations for the specific output dimension
     plt.plot(X_train[:, input_to_vary_idx], Y_train[:, output_idx], 'kx', alpha=0.6, label='Training Observations')
 
+    # Plot predicted mean
     plt.plot(X_plot[:, input_to_vary_idx], your_pred_mean[:, output_idx], 'b-', label='Predicted mean')
 
+    # Plot true function
     plt.plot(X_plot[:, input_to_vary_idx], Y_true_plot[:, output_idx], 'r-', alpha=0.6, label='True function')
 
+    # Plot 95% confidence interval
     mean_np = your_pred_mean[:, output_idx]
     std_np = your_pred_std[:, output_idx]
 
