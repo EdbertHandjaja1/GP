@@ -89,38 +89,86 @@ class PrincipalComponentGaussianProcessModel:
         self.lambda_w = lambda_w
         self.noise_var = noise_var
 
-        m = self.X_train_std.shape[0] 
+        m = self.output_dim 
+        n = self.X_train_std.shape[0] 
         q = self.n_components
-        n = self.output_dim 
+            
+        K_full = tf.zeros((n * q, n * q), dtype=tf.float64)
+        
+        for i in range(n):
+            for j in range(n):
+                K_ij_diag = tf.zeros((q, q), dtype=tf.float64)
+                    
+                for k in range(q):
+                    variance = 1.0 / self.lambda_w[k]
+                    rho = self.rho[k, :]
+                    kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
 
-        Phi_tf = tf.constant(self.Phi_basis, dtype=tf.float64) # (n x q)
-
-        Sigma_YY = tf.zeros((m * n, m * n), dtype=tf.float64)
-        for j in range(q):
-            K_j_XX = self._build_kernel_matrix(self.X_train_std, component_idx=j) # (m x m)
-
-            Phi_j = Phi_tf[:, j][:, None] # (n x 1)
-
-            # term_j = self._tf_kron(tf.matmul(Phi_j, tf.transpose(Phi_j)), K_j_XX) # (mn x mn)
-            # term_j = tf.linalg.LinearOperatorKronecker([tf.linalg.LinearOperatorFullMatrix(tf.matmul(Phi_j, tf.transpose(Phi_j))), tf.linalg.LinearOperatorFullMatrix(K_j_XX)])
-            term_j = tf.linalg.LinearOperatorKronecker([tf.linalg.LinearOperatorFullMatrix(tf.matmul(Phi_j, tf.transpose(Phi_j))), tf.linalg.LinearOperatorFullMatrix(K_j_XX)])
-            Sigma_YY += term_j
-
+                    xi = tf.expand_dims(self.X_train_std[i], 0)
+                    xj = tf.expand_dims(self.X_train_std[j], 0)
+                    k_val = kernel(xi, xj)[0, 0]
+                    
+                    K_ij_diag = tf.tensor_scatter_nd_update(
+                        K_ij_diag,
+                        [[k, k]],
+                        [k_val]
+                    )
+                    
+                start_row = i * q
+                end_row = (i + 1) * q
+                start_col = j * q
+                end_col = (j + 1) * q
+                    
+                K_full = tf.tensor_scatter_nd_update(
+                    K_full,
+                    tf.stack([
+                        tf.repeat(tf.range(start_row, end_row), q),
+                        tf.tile(tf.range(start_col, end_col), [q])
+                    ], axis=1),
+                    tf.reshape(K_ij_diag, [-1])
+                )
+            
+        phi_tf = tf.constant(self.phi_basis, dtype=tf.float64)
+        
+        I_n = tf.eye(n, dtype=tf.float64)
+        kron_I_phi = tf.zeros((n * m, n * q), dtype=tf.float64)
+            
+        for i in range(n):
+            for j in range(n):
+                if i == j:  
+                    start_row = i * m
+                    end_row = (i + 1) * m
+                    start_col = j * q
+                    end_col = (j + 1) * q
+                        
+                    kron_I_phi = tf.tensor_scatter_nd_update(
+                        kron_I_phi,
+                        tf.stack([
+                            tf.repeat(tf.range(start_row, end_row), q),
+                            tf.tile(tf.range(start_col, end_col), [m])
+                        ], axis=1),
+                        tf.reshape(phi_tf, [-1])
+                    )
+            
+        temp = tf.matmul(kron_I_phi, K_full)
+        Sigma_YY = tf.matmul(temp, kron_I_phi, transpose_b=True)
+            
         noise_term = tf.eye(m * n, dtype=tf.float64) * self.noise_var
-        Sigma_YY += noise_term 
-
+        Sigma_YY += noise_term
+            
         L_Sigma_YY = tf.linalg.cholesky(Sigma_YY)
-
+            
         log_det = 2.0 * tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L_Sigma_YY)))
-        Y_flat = tf.constant(self.Y_train_std.flatten(), dtype=tf.float64)[:, None]
+            
+        Y_flat = tf.constant(self.Y_train_std.flatten('F'), dtype=tf.float64)[:, None]
+            
         alpha = tf.linalg.cholesky_solve(L_Sigma_YY, Y_flat)
         data_fit = tf.squeeze(tf.matmul(tf.transpose(Y_flat), alpha))
-
         constant_val = 0.5 * m * n * np.log(2.0 * np.pi)
-
-        return (tf.cast(0.5, dtype=tf.float64) * data_fit +
-                tf.cast(0.5, dtype=tf.float64) * log_det +
-                tf.cast(constant_val, dtype=tf.float64)).numpy()
+            
+        nll = (0.5 * data_fit + 0.5 * log_det + constant_val)
+            
+        return tf.cast(nll, dtype=tf.float64).numpy()
 
 class GaussianKernel:
     def __init__(self, variance=1.0, rho=None, input_dim=12):
