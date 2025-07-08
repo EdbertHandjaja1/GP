@@ -38,18 +38,17 @@ def test_nll():
     noise_var_init = 1e-4
 
     # results
-    nll_value = pcgp._negative_log_marginal_likelihood(
+    nll_value, k, m, n, q = pcgp._negative_log_marginal_likelihood(
         rho_flattened_init,
         lambda_w_init,
         noise_var_init
     )
     nll_pass = isinstance(nll_value, float) and not np.isnan(nll_value) and not np.isinf(nll_value)
-    
+    expected_k_shape = pcgp.X_train_std.shape[0] * pcgp.n_components
+    k_shape_pass = (k.shape == (expected_k_shape, expected_k_shape))
+
     print("=== Negative Log Likelihood Test ===")
-    print(f"NLL calculation: {'PASS' if nll_pass else 'FAIL'}")
-    if nll_pass:
-        print(f"Calculated NLL value: {nll_value:.4f}")
-    else:
-        print(f"Calculated NLL value: {nll_value}")
+    print(f"K (nq x nq) shape:", "PASS" if k_shape_pass else "FAIL")
+    print(f"NLL calculation:", "PASS" if nll_pass else "FAIL", ": ", nll_value)
 
 test_nll()

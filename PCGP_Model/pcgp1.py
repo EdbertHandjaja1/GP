@@ -176,7 +176,6 @@ class PrincipalComponentGaussianProcessModel:
             
         # make K (derivation in paper)    
         K_full = tf.zeros((n * q, n * q), dtype=tf.float64)
-        
         for i in range(n):
             for j in range(n):
                 K_ij_diag = tf.zeros((q, q), dtype=tf.float64)
@@ -235,7 +234,7 @@ class PrincipalComponentGaussianProcessModel:
             
         nll = (0.5 * data_fit + 0.5 * log_det + constant_val)
             
-        return tf.cast(nll, dtype=tf.float64).numpy()
+        return tf.cast(nll, dtype=tf.float64).numpy(), K_full, m, n, q
     
     def fit(self, X_train, Y_train, ranges):
         """
