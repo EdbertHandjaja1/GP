@@ -38,22 +38,18 @@ def test_nll():
     noise_var_init = 1e-4
 
     # results
-    try:
-        nll_value = pcgp._negative_log_marginal_likelihood(
-            rho_flattened_init,
-            lambda_w_init,
-            noise_var_init
-        )
-
-        nll_pass = isinstance(nll_value, float) and not np.isnan(nll_value) and not np.isinf(nll_value)
-        print("=== Negative Log Likelihood Test ===")
-        print(f"NLL calculation: {'PASS' if nll_pass else 'FAIL'}")
-        if nll_pass:
-            print(f"Calculated NLL value: {nll_value:.4f}")
-        else:
-            print(f"Calculated NLL value: {nll_value}")
-    except Exception as e:
-        print("=== Negative Log Marginal Likelihood Test ===")
-        print(f"NLL calculation: FAIL (Error: {e})")
+    nll_value = pcgp._negative_log_marginal_likelihood(
+        rho_flattened_init,
+        lambda_w_init,
+        noise_var_init
+    )
+    nll_pass = isinstance(nll_value, float) and not np.isnan(nll_value) and not np.isinf(nll_value)
+    
+    print("=== Negative Log Likelihood Test ===")
+    print(f"NLL calculation: {'PASS' if nll_pass else 'FAIL'}")
+    if nll_pass:
+        print(f"Calculated NLL value: {nll_value:.4f}")
+    else:
+        print(f"Calculated NLL value: {nll_value}")
 
 test_nll()
