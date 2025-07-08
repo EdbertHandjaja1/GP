@@ -9,12 +9,10 @@ def plot_pcgp_results(output_dim_to_plot=0):
     input_dim = 3
     output_dim = 5
     n_components = 3
-    n_train = 50
     
     X_train, Y_train, _, _, ranges, true_func = generate_test_data(
         input_dim=input_dim, 
         output_dim=output_dim,
-        n_train=n_train
     )
 
     pcgp = PrincipalComponentGaussianProcessModel(
