@@ -2,7 +2,6 @@ import numpy as np
 import tensorflow as tf
 import scipy as scipy
 from scipy.optimize import minimize
-
 import matplotlib.pyplot as plt
 
 class PrincipalComponentGaussianProcessModel:
@@ -158,10 +157,10 @@ class PrincipalComponentGaussianProcessModel:
         """
         Fits the PCGP model to training data
         """
-        # self.X_train = X_train
-        # self.X_train_std = self.standardize_inputs(X_train, ranges)
-        # self.Y_train_std = self._standardize_output(Y_train)
-        # self.weights, self.phi_basis = self.compute_principal_components(self.Y_train_std)
+        self.X_train = X_train
+        self.X_train_std = self.standardize_inputs(X_train, ranges)
+        self.Y_train_std = self._standardize_output(Y_train)
+        self.weights, self.phi_basis = self.compute_principal_components(self.Y_train_std)
         
         # iteration_count = [0]
         
@@ -226,48 +225,90 @@ class PrincipalComponentGaussianProcessModel:
 
         self.noise_var = 0.808792
 
+        self.rho[0, :3] = [0.10165914, 0.03661507, 0.00734365]
+        self.lambda_w[0] = 148.4132
+        
+        self.rho[1, :3] = [4.53999298e-05, 4.53999298e-05, 4.53999298e-05]
+        self.lambda_w[1] = 1.5218
+        
+        self.rho[2, :3] = [3.01743863e-03, 8.97942316e-03, 4.53999298e-05]
+        self.lambda_w[2] = 3.3930
+
+        return self
 
     def predict(self, X_new, ranges, return_std=False):
         """
         Makes predictions using the fitted PCGP model.
+
+        Args:
+            X_new (np.ndarray): New input locations to predict at (m_test x p).
+            ranges (list): List of (min,max) tuples for each parameter for standardizing inputs.
+            return_std (bool): If True, returns both mean and standard deviation of predictions.
+
+        Returns:
+            np.ndarray: Predicted mean values at X_new (m_test x n).
+            (np.ndarray, np.ndarray): If return_std=True, returns tuple of (mean, std) where std has shape (m_test x n).
         """
         X_new_std = self.standardize_inputs(X_new, ranges)
         X_new_tf = tf.convert_to_tensor(X_new_std, dtype=tf.float64)
-    
+        X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
+
         n_train = self.X_train_std.shape[0]
         n_test = X_new_std.shape[0]
         m = self.output_dim
         q = self.n_components
         
-        K_train = self._build_kernel_matrix(self.X_train_std)  # K(X,X)
-        K_test_train = self._build_kernel_matrix(X_new_tf, self.X_train_std)  # K(X*,X)
-        K_test = self._build_kernel_matrix(X_new_tf)  # K(X*,X*)
+        K_train = self._build_kernel_matrix_reorganized(X_train_tf)  
+        K_test_train = self._build_kernel_matrix_reorganized(X_new_tf, X_train_tf)  
+        K_test = self._build_kernel_matrix_reorganized(X_new_tf)  
         
-        K_train_noisy = K_train + tf.eye(n_train * q, dtype=tf.float64) * self.noise_var
+        phi_tf = tf.constant(self.phi_basis, dtype=tf.float64)
         
-        L_train = tf.linalg.cholesky(K_train_noisy)
-        K_inv = tf.linalg.cholesky_solve(L_train, tf.eye(n_train * q, dtype=tf.float64))
+        I_n_train = tf.eye(n_train, dtype=tf.float64)
+        kron_I_phi_train = tf.linalg.LinearOperatorKronecker([
+            tf.linalg.LinearOperatorFullMatrix(I_n_train), 
+            tf.linalg.LinearOperatorFullMatrix(phi_tf)
+        ]).to_dense()
         
-        weights_flat = tf.reshape(tf.constant(self.weights, dtype=tf.float64), [-1, 1])
-        mean_flat = tf.matmul(K_test_train, tf.matmul(K_inv, weights_flat))
+        I_n_test = tf.eye(n_test, dtype=tf.float64)
+        kron_I_phi_test = tf.linalg.LinearOperatorKronecker([
+            tf.linalg.LinearOperatorFullMatrix(I_n_test), 
+            tf.linalg.LinearOperatorFullMatrix(phi_tf)
+        ]).to_dense()
         
-        mean_components = tf.reshape(mean_flat, [n_test, q])
-        mean_std = tf.matmul(mean_components, tf.transpose(tf.constant(self.phi_basis, dtype=tf.float64)))
+        kron_I_phi_cross = tf.linalg.LinearOperatorKronecker([
+            tf.linalg.LinearOperatorFullMatrix(I_n_test), 
+            tf.linalg.LinearOperatorFullMatrix(phi_tf)
+        ]).to_dense()
         
+        Sigma_YY_train = tf.matmul(kron_I_phi_train, K_train)
+        Sigma_YY_train = tf.matmul(Sigma_YY_train, tf.transpose(kron_I_phi_train))
+        Sigma_YY_train += tf.eye(m * n_train, dtype=tf.float64) * self.noise_var
+        
+        Sigma_YY_test = tf.matmul(kron_I_phi_test, K_test)
+        Sigma_YY_test = tf.matmul(Sigma_YY_test, tf.transpose(kron_I_phi_test))
+        
+        Sigma_YY_cross = tf.matmul(kron_I_phi_test, K_test_train)
+        Sigma_YY_cross = tf.matmul(Sigma_YY_cross, tf.transpose(kron_I_phi_train))
+        
+        L_train = tf.linalg.cholesky(Sigma_YY_train)
+        Y_train_flat = tf.constant(self.Y_train_std.flatten('F'), dtype=tf.float64)[:, None]
+        
+        alpha = tf.linalg.cholesky_solve(L_train, Y_train_flat)
+        mean_flat = tf.matmul(Sigma_YY_cross, alpha)
+        
+        mean_std = tf.reshape(mean_flat, [n_test, m], name='mean_reshape')
         mean = self._unstandardize_output(mean_std.numpy())
         
         if not return_std:
             return mean
         
-        var_components = K_test - tf.matmul(K_test_train, tf.matmul(K_inv, tf.transpose(K_test_train)))
-        var_components = tf.linalg.diag_part(var_components)
-        var_components = tf.reshape(var_components, [n_test, q])
-        
-        phi = tf.constant(self.phi_basis, dtype=tf.float64)
-        var = tf.reduce_sum(tf.square(phi) * tf.expand_dims(var_components, -1), axis=1)
+        v = tf.linalg.cholesky_solve(L_train, tf.transpose(Sigma_YY_cross))
+        var_flat = tf.linalg.diag_part(Sigma_YY_test - tf.matmul(Sigma_YY_cross, v))
+        var = tf.reshape(var_flat, [n_test, m])
         
         var = var + self.noise_var
-        std = tf.sqrt(var) * self.standardization_scale
+        std = tf.sqrt(tf.maximum(var, 1e-12)) * self.standardization_scale
         
         return mean, std.numpy()
 
@@ -312,3 +353,5 @@ def generate_test_data(n_train=50, n_test=20, input_dim=3, output_dim=5):
     Y_test = true_func(X_test)
     
     return X_train, Y_train, X_test, Y_test, ranges, true_func
+
+
