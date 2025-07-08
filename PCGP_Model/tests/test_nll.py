@@ -38,7 +38,7 @@ def test_nll():
     noise_var_init = 1e-4
 
     # results
-    nll_value, k, m, n, q = pcgp._negative_log_marginal_likelihood(
+    nll_value, k = pcgp._negative_log_marginal_likelihood(
         rho_flattened_init,
         lambda_w_init,
         noise_var_init

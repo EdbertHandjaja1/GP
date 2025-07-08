@@ -46,13 +46,10 @@ class PrincipalComponentGaussianProcessModel:
         y_tensor = tf.convert_to_tensor(Y_standardized, dtype=tf.float64)
         s, u, v = tf.linalg.svd(y_tensor, full_matrices=False)
         
-        # Determine the actual number of components we can extract
         actual_components = min(self.n_components, s.shape[0], v.shape[0])
         
-        # Principal components (basis functions) - these are the right singular vectors
         phi_basis = tf.transpose(v[:actual_components, :]).numpy()
         
-        # Weights (scores) - project data onto principal components
         weights = (u[:, :actual_components] @ tf.linalg.diag(s[:actual_components])).numpy()
         
         return weights, phi_basis
@@ -74,89 +71,38 @@ class PrincipalComponentGaussianProcessModel:
                 kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
                 K_blocks.append(kernel(X1, X2))
             return scipy.linalg.block_diag(*K_blocks)
+
+    def _build_kernel_matrix_reorganized(self, X1, X2=None):
+        if X2 is None:
+            X2 = X1
+
+        n1 = X1.shape[0]
+        n2 = X2.shape[0]
+        q = self.n_components
         
-    # def _negative_log_marginal_likelihood(self, rho_flattened, lambda_w, noise_var):
-    #     """
-    #     Calculate the negative log marginal likelihood for PCGP model.
-
-    #     Args:
-    #         rho_flattened (np.ndarray): Flattened array of length scales (n_components * input_dim)
-    #         lambda_w (np.ndarray): Array of precision parameters (n_components)
-    #         noise_var (float): Noise variance parameter
-
-    #     Returns:
-    #         float: Negative log marginal likelihood value
-    #     """
-    #     self.rho = np.reshape(rho_flattened, (self.n_components, self.input_dim))
-    #     self.lambda_w = lambda_w
-    #     self.noise_var = noise_var
-
-    #     m = self.output_dim 
-    #     n = self.X_train_std.shape[0] 
-    #     q = self.n_components
-            
-    #     K_full = tf.zeros((n * q, n * q), dtype=tf.float64)
+        K_full = np.zeros((n1 * q, n2 * q))
         
-    #     for i in range(n):
-    #         for j in range(n):
-    #             K_ij_diag = tf.zeros((q, q), dtype=tf.float64)
+        for i in range(n1):
+            for j in range(n2):
+                block = np.zeros((q, q))
+                for k in range(q):
+                    variance = 1.0 / self.lambda_w[k]
+                    rho = self.rho[k, :]
+                    kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
                     
-    #             for k in range(q):
-    #                 variance = 1.0 / self.lambda_w[k]
-    #                 rho = self.rho[k, :]
-    #                 kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
-
-    #                 xi = tf.expand_dims(self.X_train_std[i], 0)
-    #                 xj = tf.expand_dims(self.X_train_std[j], 0)
-    #                 k_val = kernel(xi, xj)[0, 0]
+                    xi = tf.expand_dims(X1[i], 0)
+                    xj = tf.expand_dims(X2[j], 0)
+                    k_val = kernel(xi, xj)[0, 0]
                     
-    #                 K_ij_diag = tf.tensor_scatter_nd_update(
-    #                     K_ij_diag,
-    #                     [[k, k]],
-    #                     [k_val]
-    #                 )
-                    
-    #             start_row = i * q
-    #             end_row = (i + 1) * q
-    #             start_col = j * q
-    #             end_col = (j + 1) * q
-                    
-    #             K_full = tf.tensor_scatter_nd_update(
-    #                 K_full,
-    #                 tf.stack([
-    #                     tf.repeat(tf.range(start_row, end_row), q),
-    #                     tf.tile(tf.range(start_col, end_col), [q])
-    #                 ], axis=1),
-    #                 tf.reshape(K_ij_diag, [-1])
-    #             )
-            
-    #     phi_tf = tf.constant(self.phi_basis, dtype=tf.float64)
-
-    #     I_n = tf.eye(n, dtype=tf.float64)
-    #     kron_I_phi = tf.linalg.LinearOperatorKronecker([tf.linalg.LinearOperatorFullMatrix(I_n), tf.linalg.LinearOperatorFullMatrix(phi_tf)])
-    #     Sigma_YY = tf.matmul(kron_I_phi, K_full)
-    #     Sigma_YY = tf.matmul(Sigma_YY, tf.transpose(kron_I_phi))
-            
-    #     noise_term = tf.eye(m * n, dtype=tf.float64) * self.noise_var
-    #     Sigma_YY += noise_term
-            
-    #     L_Sigma_YY = tf.linalg.cholesky(Sigma_YY)
-            
-    #     log_det = 2.0 * tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L_Sigma_YY)))
-            
-    #     Y_flat = tf.constant(self.Y_train_std.flatten('F'), dtype=tf.float64)[:, None]
-            
-    #     alpha = tf.linalg.cholesky_solve(L_Sigma_YY, Y_flat)
-    #     data_fit = tf.squeeze(tf.matmul(tf.transpose(Y_flat), alpha))
-    #     constant_val = 0.5 * m * n * np.log(2.0 * np.pi)
-            
-    #     nll = (0.5 * data_fit + 0.5 * log_det + constant_val)
-            
-    #     return tf.cast(nll, dtype=tf.float64).numpy()
+                    block[k, k] = k_val
+                
+                K_full[i*q:(i+1)*q, j*q:(j+1)*q] = block
+        
+        return tf.convert_to_tensor(K_full, dtype=tf.float64)
 
     def _negative_log_marginal_likelihood(self, rho_flattened, lambda_w, noise_var):
         """
-        Calculate the negative log marginal likelihood for PCGP model.
+        Calculate the negative log marginal likelihood for PCGP model using _build_kernel_matrix.
 
         Args:
             rho_flattened (np.ndarray): Flattened array of length scales (n_components * input_dim)
@@ -174,45 +120,15 @@ class PrincipalComponentGaussianProcessModel:
         n = self.X_train_std.shape[0] 
         q = self.n_components
             
-        # make K (derivation in paper)    
-        K_full = tf.zeros((n * q, n * q), dtype=tf.float64)
-        for i in range(n):
-            for j in range(n):
-                K_ij_diag = tf.zeros((q, q), dtype=tf.float64)
-                    
-                for k in range(q):
-                    variance = 1.0 / self.lambda_w[k]
-                    rho = self.rho[k, :]
-                    kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
-
-                    xi = tf.expand_dims(self.X_train_std[i], 0)
-                    xj = tf.expand_dims(self.X_train_std[j], 0)
-                    k_val = kernel(xi, xj)[0, 0]
-                    
-                    K_ij_diag = tf.tensor_scatter_nd_update(
-                        K_ij_diag,
-                        [[k, k]],
-                        [k_val]
-                    )
-                    
-                start_row = i * q
-                end_row = (i + 1) * q
-                start_col = j * q
-                end_col = (j + 1) * q
-                    
-                K_full = tf.tensor_scatter_nd_update(
-                    K_full,
-                    tf.stack([
-                        tf.repeat(tf.range(start_row, end_row), q),
-                        tf.tile(tf.range(start_col, end_col), [q])
-                    ], axis=1),
-                    tf.reshape(K_ij_diag, [-1])
-                )
-            
+        K_full = self._build_kernel_matrix_reorganized(self.X_train_std)
+        
         phi_tf = tf.constant(self.phi_basis, dtype=tf.float64) 
 
         I_n = tf.eye(n, dtype=tf.float64)
-        kron_I_phi_operator = tf.linalg.LinearOperatorKronecker([tf.linalg.LinearOperatorFullMatrix(I_n), tf.linalg.LinearOperatorFullMatrix(phi_tf)])
+        kron_I_phi_operator = tf.linalg.LinearOperatorKronecker([
+            tf.linalg.LinearOperatorFullMatrix(I_n), 
+            tf.linalg.LinearOperatorFullMatrix(phi_tf)
+        ])
         
         kron_I_phi_dense = kron_I_phi_operator.to_dense()
 
@@ -233,8 +149,10 @@ class PrincipalComponentGaussianProcessModel:
         constant_val = 0.5 * m * n * np.log(2.0 * np.pi)
             
         nll = (0.5 * data_fit + 0.5 * log_det + constant_val)
-            
-        return tf.cast(nll, dtype=tf.float64).numpy(), K_full, m, n, q
+
+        return tf.cast(nll, dtype=tf.float64).numpy()
+        ### for nll test ###
+        # return tf.cast(nll, dtype=tf.float64).numpy(), K_full
     
     def fit(self, X_train, Y_train, ranges):
         """
@@ -249,14 +167,14 @@ class PrincipalComponentGaussianProcessModel:
         self.X_train = X_train
         self.X_train_std = self.standardize_inputs(X_train, ranges)
         self.Y_train_std = self._standardize_output(Y_train)
-        self.K_eta_scores, self.Phi_basis = self.compute_principal_components(self.Y_train_std)
-
+        self.weights, self.phi_basis = self.compute_principal_components(self.Y_train_std)
+        
         def objective(params):
             rho_flattened = np.exp(params[:self.n_components * self.input_dim])
             lambda_w = np.exp(params[self.n_components * self.input_dim : self.n_components * self.input_dim + self.n_components])
             noise_var = np.exp(params[-1])
             return self._negative_log_marginal_likelihood(rho_flattened, lambda_w, noise_var)
-
+        
         initial_rho_log = np.log(self.rho.flatten())
         initial_lambda_w_log = np.log(self.lambda_w)
         initial_noise_var_log = np.log(self.noise_var)
@@ -266,7 +184,6 @@ class PrincipalComponentGaussianProcessModel:
             initial_lambda_w_log,
             np.array([initial_noise_var_log])
         ])
-
         bounds = [(None, None)] * len(initial_params_flat)
 
         result = minimize(
@@ -276,7 +193,8 @@ class PrincipalComponentGaussianProcessModel:
                 bounds=bounds,
                 options={'disp': False, 'maxiter': 1000}
         )
-
+        print(5)
+        # STUCK HERE
         opt_params = result.x
         self.rho = np.exp(np.reshape(opt_params[:self.n_components * self.input_dim],
                             (self.n_components, self.input_dim)))
