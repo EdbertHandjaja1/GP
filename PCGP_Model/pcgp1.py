@@ -222,7 +222,45 @@ class PrincipalComponentGaussianProcessModel:
             np.ndarray: Predicted mean values at X_new (m_test x n).
             (np.ndarray, np.ndarray): If return_std=True, returns tuple of (mean, std) where std has shape (m_test x n).
         """
-        pass
+        X_new_std = self.standardize_inputs(X_new, ranges)
+        X_new_tf = tf.convert_to_tensor(X_new_std, dtype=tf.float64)
+    
+        n_train = self.X_train_std.shape[0]
+        n_test = X_new_std.shape[0]
+        m = self.output_dim
+        q = self.n_components
+        
+        K_train = self._build_kernel_matrix(self.X_train_std)  # K(X,X)
+        K_test_train = self._build_kernel_matrix(X_new_tf, self.X_train_std)  # K(X*,X)
+        K_test = self._build_kernel_matrix(X_new_tf)  # K(X*,X*)
+        
+        K_train_noisy = K_train + tf.eye(n_train * q, dtype=tf.float64) * self.noise_var
+        
+        L_train = tf.linalg.cholesky(K_train_noisy)
+        K_inv = tf.linalg.cholesky_solve(L_train, tf.eye(n_train * q, dtype=tf.float64))
+        
+        weights_flat = tf.reshape(tf.constant(self.weights, dtype=tf.float64), [-1, 1])
+        mean_flat = tf.matmul(K_test_train, tf.matmul(K_inv, weights_flat))
+        
+        mean_components = tf.reshape(mean_flat, [n_test, q])
+        mean_std = tf.matmul(mean_components, tf.transpose(tf.constant(self.phi_basis, dtype=tf.float64)))
+        
+        mean = self._unstandardize_output(mean_std.numpy())
+        
+        if not return_std:
+            return mean
+        
+        var_components = K_test - tf.matmul(K_test_train, tf.matmul(K_inv, tf.transpose(K_test_train)))
+        var_components = tf.linalg.diag_part(var_components)
+        var_components = tf.reshape(var_components, [n_test, q])
+        
+        phi = tf.constant(self.phi_basis, dtype=tf.float64)
+        var = tf.reduce_sum(tf.square(phi) * tf.expand_dims(var_components, -1), axis=1)
+        
+        var = var + self.noise_var
+        std = tf.sqrt(var) * self.standardization_scale
+        
+        return mean, std.numpy()
 
 class GaussianKernel:
     def __init__(self, variance=1.0, rho=None, input_dim=12):

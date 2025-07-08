@@ -9,7 +9,7 @@ def test_nll():
     input_dim = 3
     output_dim = 5
     n_components = 3
-    n_train = 10 # Use a smaller n_train for NLL test to avoid very large matrices
+    n_train = 10 
     X_train, Y_train, _, _, ranges, _ = generate_test_data(
         n_train=n_train,
         input_dim=input_dim, 
