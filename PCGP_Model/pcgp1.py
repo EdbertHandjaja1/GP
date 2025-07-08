@@ -245,7 +245,7 @@ class PrincipalComponentGaussianProcessModel:
             Y_train (np.ndarray): Output matrix (m x n).
             ranges (list): List of (min,max) tuples for each parameter for standardizing inputs.
         Returns:
-            self: Fitted model.
+            self: Fitted model
         """
         self.X_train = X_train
         self.X_train_std = self.standardize_inputs(X_train, ranges)
