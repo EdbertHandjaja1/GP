@@ -1,9 +1,9 @@
-
 import numpy as np
 import tensorflow as tf
 import scipy as scipy
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
+# from surmise import PCGP # emulator & calibrator
 
 class PrincipalComponentGaussianProcessModel:
     def __init__(self, n_components=9, input_dim=12, output_dim=28):
@@ -71,13 +71,13 @@ class PrincipalComponentGaussianProcessModel:
                 K_blocks.append(kernel(X1, X2))
             return scipy.linalg.block_diag(*K_blocks)
 
-    def _tf_kron(self, A, B):
-        """
-        Computes the Kronecker product of two matrices A and B using TensorFlow.
-        """
-        s1, s2 = A.shape
-        s3, s4 = B.shape
-        return tf.reshape(tf.einsum('ij,kl->ikjl', A, B), [s1 * s3, s2 * s4])
+    # def _tf_kron(self, A, B):
+    #     """
+    #     Computes the Kronecker product of two matrices A and B using TensorFlow.
+    #     """
+    #     s1, s2 = A.shape
+    #     s3, s4 = B.shape
+    #     return tf.reshape(tf.einsum('ij,kl->ikjl', A, B), [s1 * s3, s2 * s4])
 
 
     def _negative_log_marginal_likelihood(self, rho_flattened, lambda_w, noise_var):
@@ -108,7 +108,9 @@ class PrincipalComponentGaussianProcessModel:
 
             Phi_j = Phi_tf[:, j][:, None] # (n x 1)
 
-            term_j = self._tf_kron(tf.matmul(Phi_j, tf.transpose(Phi_j)), K_j_XX) # (mn x mn)
+            # term_j = self._tf_kron(tf.matmul(Phi_j, tf.transpose(Phi_j)), K_j_XX) # (mn x mn)
+            # term_j = tf.linalg.LinearOperatorKronecker([tf.linalg.LinearOperatorFullMatrix(tf.matmul(Phi_j, tf.transpose(Phi_j))), tf.linalg.LinearOperatorFullMatrix(K_j_XX)])
+            term_j = tf.linalg.LinearOperatorKronecker([tf.linalg.LinearOperatorFullMatrix(tf.matmul(Phi_j, tf.transpose(Phi_j))), tf.linalg.LinearOperatorFullMatrix(K_j_XX)])
             Sigma_YY += term_j
 
         noise_term = tf.eye(m * n, dtype=tf.float64) * self.noise_var
