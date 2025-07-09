@@ -3,6 +3,7 @@ import tensorflow as tf
 import scipy as scipy
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
+import gpflow
 
 class PrincipalComponentGaussianProcessModel:
     def __init__(self, n_components=9, input_dim=12, output_dim=28):
@@ -421,5 +422,3 @@ def generate_test_data(n_train=50, n_test=20, input_dim=3, output_dim=5):
     Y_test = true_func(X_test)
     
     return X_train, Y_train, X_test, Y_test, ranges, true_func
-
-
