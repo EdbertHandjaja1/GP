@@ -33,11 +33,15 @@ def plot_pcgp_training_predictions(output_dim_to_plot=0):
     y_pred_sorted = Y_pred_mean[sort_idx, output_dim_to_plot]
     y_std_sorted = Y_pred_std[sort_idx, output_dim_to_plot]
 
+    true_func_values = true_func(X_train[sort_idx])[:, output_dim_to_plot]
+
     plt.scatter(x_sorted, y_true_sorted, c='black', marker='x', 
                 s=100, label='True Training Values')
     
     plt.plot(x_sorted, y_pred_sorted, 'bo-', linewidth=2, 
              markersize=6, label='Predicted mean')
+    plt.plot(x_sorted, true_func_values, 'r-', linewidth=3, 
+                label='True function')
     plt.fill_between(x_sorted,
              (y_pred_sorted - 2 * y_std_sorted),
              (y_pred_sorted + 2 * y_std_sorted),
