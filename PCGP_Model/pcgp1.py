@@ -335,7 +335,7 @@ class PrincipalComponentGaussianProcessModel:
             # from therom 3.1
             w_k = self.weights[:, k:k+1]  # mk
             
-            C_k = self._build_kernel_matrix(X_train_tf)
+            C_k = self._build_kernel_matrix(X_train_tf, component_idx=k)
             
             # sk
             d_k = 1.0 / self.lambda_w[k]
@@ -343,9 +343,9 @@ class PrincipalComponentGaussianProcessModel:
             S_k = tf.linalg.inv(d_k * tf.eye(n_train, dtype=tf.float64) + C_k_inv)
             
             # from theorem 3.3
-            c_k_x = self._build_kernel_matrix_reorganized(X_new_tf, X_train_tf)
+            c_k_x = self._build_kernel_matrix(X_new_tf, X_train_tf, component_idx=k)
             
-            c_k_xx_full = self._build_kernel_matrix_reorganized(X_new_tf)
+            c_k_xx_full = self._build_kernel_matrix(X_new_tf, component_idx=k)
             c_k_xx_diag = tf.linalg.diag_part(c_k_xx_full)
             
             # tk
