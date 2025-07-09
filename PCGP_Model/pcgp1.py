@@ -51,6 +51,10 @@ class PrincipalComponentGaussianProcessModel:
         phi_basis = tf.transpose(v[:actual_components, :]).numpy()
         
         weights = (u[:, :actual_components] @ tf.linalg.diag(s[:actual_components])).numpy()
+
+        # phi_basis = v[:actual_components, :].numpy().T  # (output_dim, n_components)
+        
+        # weights = (Y_standardized @ phi_basis).astype(np.float64)
         
         return weights, phi_basis
     
