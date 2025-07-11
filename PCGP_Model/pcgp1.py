@@ -70,7 +70,7 @@ class PrincipalComponentGaussianProcessModel:
                 K_blocks.append(kernel(X1, X2))
             return scipy.linalg.block_diag(*K_blocks)
 
-    def _negative_log_marginal_likelihood(self, rho_flattened, lambda_w, noise_var, component_i):
+    def _negative_log_marginal_likelihood(self, rho_flattened, lambda_w, noise_var):
         """
         Calculate the negative log marginal likelihood for PCGP model using _build_kernel_matrix.
 
@@ -124,77 +124,64 @@ class PrincipalComponentGaussianProcessModel:
         self.Y_train_std = self._standardize_output(Y_train)
         self.weights, self.phi_basis = self.compute_principal_components(self.Y_train_std)
         
-        # iteration_count = [0]
+        iteration_count = [0]
         
-        # def objective(params):
-        #     iteration_count[0] += 1
+        def objective(params):
+            iteration_count[0] += 1
             
-        #     rho_flattened = np.exp(np.clip(params[:self.n_components * self.input_dim], -10, 5))
-        #     lambda_w = np.exp(np.clip(params[self.n_components * self.input_dim : self.n_components * self.input_dim + self.n_components], -10, 5))
-        #     noise_var = np.exp(np.clip(params[-1], -15, 0))
+            rho_flattened = np.exp(params[:self.n_components * self.input_dim])
+            lambda_w = np.exp(params[self.n_components * self.input_dim : -1])
+            noise_var = np.exp(params[-1])
             
-        #     nll = self._negative_log_marginal_likelihood(rho_flattened, lambda_w, noise_var)
+            nll = self._negative_log_marginal_likelihood(rho_flattened, lambda_w, noise_var)
             
-        #     # debug
-        #     if iteration_count[0] % 10 == 0:
-        #         print(f"Iteration {iteration_count[0]}: NLL = {nll:.6f}, noise_var = {noise_var:.6f}")
-        #         print(f"  Sample rho: {rho_flattened[:3]}")
-        #         print(f"  Sample lambda_w: {lambda_w[:3]}")
+            # debug
+            if iteration_count[0] % 10 == 0:
+                print(f"Iteration {iteration_count[0]}: NLL = {nll:.6f}, noise_var = {noise_var:.6f}")
+                print(f"  Sample rho: {rho_flattened[:3]}")
+                print(f"  Sample lambda_w: {lambda_w[:3]}")
             
-        #     return nll
-        
-        # initial_rho_log = np.log(np.clip(self.rho.flatten(), 1e-6, 10))
-        # initial_lambda_w_log = np.log(np.clip(self.lambda_w, 1e-6, 10))
-        # initial_noise_var_log = np.log(np.clip(self.noise_var, 1e-15, 1))
+            return nll
 
-        # initial_params_flat = np.concatenate([
-        #     initial_rho_log,
-        #     initial_lambda_w_log,
-        #     np.array([initial_noise_var_log])
-        # ])
-        
-        # bounds = []
-        # for _ in range(self.n_components * self.input_dim):
-        #     bounds.append((-10, 5))  
-        # for _ in range(self.n_components):
-        #     bounds.append((-10, 5))  
-        # bounds.append((-15, 0))  
+        initial_rho_log = np.log(self.rho.flatten())
+        initial_lambda_w_log = np.log(self.lambda_w)
+        initial_noise_var_log = np.log(self.noise_var)
 
-        # result = minimize(
-        #     fun=objective,
-        #     x0=initial_params_flat,
-        #     method='L-BFGS-B',
-        #     bounds=bounds,
-        #     options={'disp': True}
-        # )
-        
-        # print(f"Optimization completed in {iteration_count[0]} iterations")
-        # print(f"Final NLL: {result.fun:.6f}")
-        
-        # opt_params = result.x
-        # self.rho = np.exp(np.clip(opt_params[:self.n_components * self.input_dim], -10, 5))
-        # self.rho = np.reshape(self.rho, (self.n_components, self.input_dim))
-        # self.lambda_w = np.exp(np.clip(opt_params[self.n_components * self.input_dim:-1], -10, 5))
-        # self.noise_var = np.exp(np.clip(opt_params[-1], -15, 0))
+        initial_params_flat = np.concatenate([
+            initial_rho_log,
+            initial_lambda_w_log,
+            np.array([initial_noise_var_log])
+        ])
 
-        # for i in range(self.n_components):
-        #     print(f"Component {i+1}:")
-        #     print(f"  Length scales (ρ): {self.rho[i]}")
-        #     print(f"  Precision (λ): {self.lambda_w[i]:.4f}")
-        # print(f"Noise variance: {self.noise_var:.6f}")
+        bounds = []
+        for _ in range(self.n_components * self.input_dim):
+            bounds.append((-10, 5))  
+        for _ in range(self.n_components):
+            bounds.append((-10, 5))  
+        bounds.append((-15, 0))  
 
-        # return self
-
-        self.noise_var = 0.808792
-
-        self.rho[0, :3] = [0.10165914, 0.03661507, 0.00734365]
-        self.lambda_w[0] = 148.4132
+        result = minimize(
+            fun=objective,
+            x0=initial_params_flat,
+            method='L-BFGS-B',
+            bounds=bounds,
+            options={'disp': True}
+        )
         
-        self.rho[1, :3] = [4.53999298e-05, 4.53999298e-05, 4.53999298e-05]
-        self.lambda_w[1] = 1.5218
+        print(f"Optimization completed in {iteration_count[0]} iterations")
+        print(f"Final NLL: {result.fun:.6f}")
         
-        self.rho[2, :3] = [3.01743863e-03, 8.97942316e-03, 4.53999298e-05]
-        self.lambda_w[2] = 3.3930
+        opt_params = result.x
+        self.rho = np.exp(np.clip(opt_params[:self.n_components * self.input_dim], -10, 5))
+        self.rho = np.reshape(self.rho, (self.n_components, self.input_dim))
+        self.lambda_w = np.exp(np.clip(opt_params[self.n_components * self.input_dim:-1], -10, 5))
+        self.noise_var = np.exp(np.clip(opt_params[-1], -15, 0))
+
+        for i in range(self.n_components):
+            print(f"Component {i+1}:")
+            print(f"  Length scales (ρ): {self.rho[i]}")
+            print(f"  Precision (λ): {self.lambda_w[i]:.4f}")
+        print(f"Noise variance: {self.noise_var:.6f}")
 
         return self
 
