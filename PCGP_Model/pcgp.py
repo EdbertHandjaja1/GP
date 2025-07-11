@@ -3,7 +3,7 @@ import tensorflow as tf
 import scipy as scipy
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
-# from surmise import PCGP # emulator & calibrator
+import gpflow
 
 class PrincipalComponentGaussianProcessModel:
     def __init__(self, n_components=9, input_dim=12, output_dim=28):
@@ -12,14 +12,16 @@ class PrincipalComponentGaussianProcessModel:
         self.output_dim = output_dim
         self.standardization_mean = None
         self.standardization_scale = None
-        self.K_eta_scores = None
-        self.Phi_basis = None
+        self.weights = None
+        self.phi_basis = None
         self.X_train = None
         self.X_train_std = None
         self.Y_train_std = None
         self.rho = np.ones((n_components, input_dim)) * 0.1
         self.lambda_w = np.ones(n_components) * 1.0
         self.noise_var = 1e-3
+        # maybe store alpha
+        self.gp_models = []
 
     def standardize_inputs(self, X, ranges):
         X = np.asarray(X, dtype=np.float64)
@@ -45,14 +47,11 @@ class PrincipalComponentGaussianProcessModel:
     def compute_principal_components(self, Y_standardized):
         y_tensor = tf.convert_to_tensor(Y_standardized, dtype=tf.float64)
         s, u, v = tf.linalg.svd(y_tensor, full_matrices=False)
-        
         actual_components = min(self.n_components, s.shape[0], v.shape[0])
-        
-        K_eta_scores = (u @ tf.linalg.diag(s))[:, :actual_components].numpy()
-        Phi_basis = tf.transpose(v[:actual_components, :]).numpy()  # Transpose to get (output_dim, n_components)
-        
-        return K_eta_scores, Phi_basis
-
+        phi_basis = tf.transpose(v[:actual_components, :]).numpy()
+        weights = (u[:, :actual_components] @ tf.linalg.diag(s[:actual_components])).numpy()        
+        return weights, phi_basis
+    
     def _build_kernel_matrix(self, X1, X2=None, component_idx=None):
         if X2 is None:
             X2 = X1
@@ -71,18 +70,9 @@ class PrincipalComponentGaussianProcessModel:
                 K_blocks.append(kernel(X1, X2))
             return scipy.linalg.block_diag(*K_blocks)
 
-    # def _tf_kron(self, A, B):
-    #     """
-    #     Computes the Kronecker product of two matrices A and B using TensorFlow.
-    #     """
-    #     s1, s2 = A.shape
-    #     s3, s4 = B.shape
-    #     return tf.reshape(tf.einsum('ij,kl->ikjl', A, B), [s1 * s3, s2 * s4])
-
-
-    def _negative_log_marginal_likelihood(self, rho_flattened, lambda_w, noise_var):
+    def _negative_log_marginal_likelihood(self, rho_flattened, lambda_w, noise_var, component_i):
         """
-        Calculate the negative log marginal likelihood for PCGP model.
+        Calculate the negative log marginal likelihood for PCGP model using _build_kernel_matrix.
 
         Args:
             rho_flattened (np.ndarray): Flattened array of length scales (n_components * input_dim)
@@ -96,165 +86,262 @@ class PrincipalComponentGaussianProcessModel:
         self.lambda_w = lambda_w
         self.noise_var = noise_var
 
-        m = self.X_train_std.shape[0] 
+        m = self.output_dim 
+        n = self.X_train_std.shape[0] 
         q = self.n_components
-        n = self.output_dim 
 
-        Phi_tf = tf.constant(self.Phi_basis, dtype=tf.float64) # (n x q)
+        total_nll = 0
 
-        Sigma_YY = tf.zeros((m * n, m * n), dtype=tf.float64)
-        for j in range(q):
-            K_j_XX = self._build_kernel_matrix(self.X_train_std, component_idx=j) # (m x m)
+        for k in range(self.n_components):
+            w_k = tf.constant(self.weights[:, k:k+1], dtype=tf.float64)
+            K_k = self._build_kernel_matrix(self.X_train_std, component_idx=k)
 
-            Phi_j = Phi_tf[:, j][:, None] # (n x 1)
+            Sigma_k = K_k + tf.eye(n, dtype=tf.float64)
+            L_k = tf.linalg.cholesky(Sigma_k)
 
-            # term_j = self._tf_kron(tf.matmul(Phi_j, tf.transpose(Phi_j)), K_j_XX) # (mn x mn)
-            # term_j = tf.linalg.LinearOperatorKronecker([tf.linalg.LinearOperatorFullMatrix(tf.matmul(Phi_j, tf.transpose(Phi_j))), tf.linalg.LinearOperatorFullMatrix(K_j_XX)])
-            term_j = tf.linalg.LinearOperatorKronecker([tf.linalg.LinearOperatorFullMatrix(tf.matmul(Phi_j, tf.transpose(Phi_j))), tf.linalg.LinearOperatorFullMatrix(K_j_XX)])
-            Sigma_YY += term_j
+            # term 1
+            alpha_k = tf.linalg.cholesky_solve(L_k, w_k)
+            data_fit_k = tf.squeeze(tf.matmul(tf.transpose(w_k), alpha_k))
 
-        noise_term = tf.eye(m * n, dtype=tf.float64) * self.noise_var
-        Sigma_YY += noise_term 
+            # term 2
+            log_det_k = 2.0 * tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L_k)))
 
-        L_Sigma_YY = tf.linalg.cholesky(Sigma_YY)
+            # term 3
+            constant = n * np.log(2.0 * np.pi)
 
-        log_det = 2.0 * tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L_Sigma_YY)))
-        Y_flat = tf.constant(self.Y_train_std.flatten(), dtype=tf.float64)[:, None]
-        alpha = tf.linalg.cholesky_solve(L_Sigma_YY, Y_flat)
-        data_fit = tf.squeeze(tf.matmul(tf.transpose(Y_flat), alpha))
+            nll_k = 0.5 * (data_fit_k + log_det_k + constant)
 
-        constant_val = 0.5 * m * n * np.log(2.0 * np.pi)
+            total_nll += nll_k
 
-        return (tf.cast(0.5, dtype=tf.float64) * data_fit +
-                tf.cast(0.5, dtype=tf.float64) * log_det +
-                tf.cast(constant_val, dtype=tf.float64)).numpy()
-
-
+        return tf.cast(total_nll, dtype=tf.float64).numpy()
+    
     def fit(self, X_train, Y_train, ranges):
         """
         Fits the PCGP model to training data
-        Args:
-            X_train (np.ndarray): Input design matrix (m x p).
-            Y_train (np.ndarray): Output matrix (m x n).
-            ranges (list): List of (min,max) tuples for each parameter for standardizing inputs.
-        Returns:
-            self: Fitted model.
         """
         self.X_train = X_train
         self.X_train_std = self.standardize_inputs(X_train, ranges)
         self.Y_train_std = self._standardize_output(Y_train)
-        self.K_eta_scores, self.Phi_basis = self.compute_principal_components(self.Y_train_std)
+        self.weights, self.phi_basis = self.compute_principal_components(self.Y_train_std)
+        
+        # iteration_count = [0]
+        
+        # def objective(params):
+        #     iteration_count[0] += 1
+            
+        #     rho_flattened = np.exp(np.clip(params[:self.n_components * self.input_dim], -10, 5))
+        #     lambda_w = np.exp(np.clip(params[self.n_components * self.input_dim : self.n_components * self.input_dim + self.n_components], -10, 5))
+        #     noise_var = np.exp(np.clip(params[-1], -15, 0))
+            
+        #     nll = self._negative_log_marginal_likelihood(rho_flattened, lambda_w, noise_var)
+            
+        #     # debug
+        #     if iteration_count[0] % 10 == 0:
+        #         print(f"Iteration {iteration_count[0]}: NLL = {nll:.6f}, noise_var = {noise_var:.6f}")
+        #         print(f"  Sample rho: {rho_flattened[:3]}")
+        #         print(f"  Sample lambda_w: {lambda_w[:3]}")
+            
+        #     return nll
+        
+        # initial_rho_log = np.log(np.clip(self.rho.flatten(), 1e-6, 10))
+        # initial_lambda_w_log = np.log(np.clip(self.lambda_w, 1e-6, 10))
+        # initial_noise_var_log = np.log(np.clip(self.noise_var, 1e-15, 1))
 
-        def objective(params):
-            rho_flattened = np.exp(params[:self.n_components * self.input_dim])
-            lambda_w = np.exp(params[self.n_components * self.input_dim : self.n_components * self.input_dim + self.n_components])
-            noise_var = np.exp(params[-1])
-            return self._negative_log_marginal_likelihood(rho_flattened, lambda_w, noise_var)
+        # initial_params_flat = np.concatenate([
+        #     initial_rho_log,
+        #     initial_lambda_w_log,
+        #     np.array([initial_noise_var_log])
+        # ])
+        
+        # bounds = []
+        # for _ in range(self.n_components * self.input_dim):
+        #     bounds.append((-10, 5))  
+        # for _ in range(self.n_components):
+        #     bounds.append((-10, 5))  
+        # bounds.append((-15, 0))  
 
-        initial_rho_log = np.log(self.rho.flatten())
-        initial_lambda_w_log = np.log(self.lambda_w)
-        initial_noise_var_log = np.log(self.noise_var)
+        # result = minimize(
+        #     fun=objective,
+        #     x0=initial_params_flat,
+        #     method='L-BFGS-B',
+        #     bounds=bounds,
+        #     options={'disp': True}
+        # )
+        
+        # print(f"Optimization completed in {iteration_count[0]} iterations")
+        # print(f"Final NLL: {result.fun:.6f}")
+        
+        # opt_params = result.x
+        # self.rho = np.exp(np.clip(opt_params[:self.n_components * self.input_dim], -10, 5))
+        # self.rho = np.reshape(self.rho, (self.n_components, self.input_dim))
+        # self.lambda_w = np.exp(np.clip(opt_params[self.n_components * self.input_dim:-1], -10, 5))
+        # self.noise_var = np.exp(np.clip(opt_params[-1], -15, 0))
 
-        initial_params_flat = np.concatenate([
-            initial_rho_log,
-            initial_lambda_w_log,
-            np.array([initial_noise_var_log])
-        ])
+        # for i in range(self.n_components):
+        #     print(f"Component {i+1}:")
+        #     print(f"  Length scales (ρ): {self.rho[i]}")
+        #     print(f"  Precision (λ): {self.lambda_w[i]:.4f}")
+        # print(f"Noise variance: {self.noise_var:.6f}")
 
-        bounds = [(None, None)] * len(initial_params_flat)
+        # return self
 
-        result = minimize(
-                fun=objective,
-                x0=initial_params_flat,
-                method='L-BFGS-B',
-                bounds=bounds,
-                options={'disp': False, 'maxiter': 1000}
-        )
+        self.noise_var = 0.808792
 
-        opt_params = result.x
-        self.rho = np.exp(np.reshape(opt_params[:self.n_components * self.input_dim],
-                            (self.n_components, self.input_dim)))
-        self.lambda_w = np.exp(opt_params[self.n_components * self.input_dim:-1])
-        self.noise_var = np.exp(opt_params[-1])
-
-        for i in range(self.n_components):
-            print(f"Component {i+1}:")
-            print(f"  Length scales (ρ): {self.rho[i]}")
-            print(f"  Precision (λ): {self.lambda_w[i]:.4f}")
-        print(f"Noise variance: {self.noise_var:.6f}")
+        self.rho[0, :3] = [0.10165914, 0.03661507, 0.00734365]
+        self.lambda_w[0] = 148.4132
+        
+        self.rho[1, :3] = [4.53999298e-05, 4.53999298e-05, 4.53999298e-05]
+        self.lambda_w[1] = 1.5218
+        
+        self.rho[2, :3] = [3.01743863e-03, 8.97942316e-03, 4.53999298e-05]
+        self.lambda_w[2] = 3.3930
 
         return self
 
+    # def predict(self, X_new, ranges, return_std=False):
+    #     """
+    #     Makes predictions using the fitted PCGP model.
+
+    #     Args:
+    #         X_new (np.ndarray): New input locations to predict at (m_test x p).
+    #         ranges (list): List of (min,max) tuples for each parameter for standardizing inputs.
+    #         return_std (bool): If True, returns both mean and standard deviation of predictions.
+
+    #     Returns:
+    #         np.ndarray: Predicted mean values at X_new (m_test x n).
+    #         (np.ndarray, np.ndarray): If return_std=True, returns tuple of (mean, std) where std has shape (m_test x n).
+    #     """
+    #     X_new_std = self.standardize_inputs(X_new, ranges)
+    #     X_new_tf = tf.convert_to_tensor(X_new_std, dtype=tf.float64)
+    #     X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
+
+    #     n_train = self.X_train_std.shape[0]
+    #     n_test = X_new_std.shape[0]
+    #     m = self.output_dim
+    #     q = self.n_components
+        
+    #     K_train = self._build_kernel_matrix_reorganized(X_train_tf)  
+    #     K_test_train = self._build_kernel_matrix_reorganized(X_new_tf, X_train_tf)  
+    #     K_test = self._build_kernel_matrix_reorganized(X_new_tf)  
+        
+    #     phi_tf = tf.constant(self.phi_basis, dtype=tf.float64)
+        
+    #     I_n_train = tf.eye(n_train, dtype=tf.float64)
+    #     kron_I_phi_train = tf.linalg.LinearOperatorKronecker([
+    #         tf.linalg.LinearOperatorFullMatrix(I_n_train), 
+    #         tf.linalg.LinearOperatorFullMatrix(phi_tf)
+    #     ]).to_dense()
+        
+    #     I_n_test = tf.eye(n_test, dtype=tf.float64)
+    #     kron_I_phi_test = tf.linalg.LinearOperatorKronecker([
+    #         tf.linalg.LinearOperatorFullMatrix(I_n_test), 
+    #         tf.linalg.LinearOperatorFullMatrix(phi_tf)
+    #     ]).to_dense()
+        
+    #     Sigma_YY_train = tf.matmul(kron_I_phi_train, K_train)
+    #     Sigma_YY_train = tf.matmul(Sigma_YY_train, tf.transpose(kron_I_phi_train))
+    #     Sigma_YY_train += tf.eye(m * n_train, dtype=tf.float64) * self.noise_var
+        
+    #     Sigma_YY_test = tf.matmul(kron_I_phi_test, K_test)
+    #     Sigma_YY_test = tf.matmul(Sigma_YY_test, tf.transpose(kron_I_phi_test))
+        
+    #     Sigma_YY_cross = tf.matmul(kron_I_phi_test, K_test_train)
+    #     Sigma_YY_cross = tf.matmul(Sigma_YY_cross, tf.transpose(kron_I_phi_train))
+        
+    #     L_train = tf.linalg.cholesky(Sigma_YY_train)
+    #     Y_train_flat = tf.constant(self.Y_train_std.flatten('F'), dtype=tf.float64)[:, None]
+        
+    #     alpha = tf.linalg.cholesky_solve(L_train, Y_train_flat)
+    #     mean_flat = tf.matmul(Sigma_YY_cross, alpha)
+        
+    #     mean_std = tf.reshape(mean_flat, [n_test, m], name='mean_reshape')
+    #     mean = self._unstandardize_output(mean_std.numpy())
+        
+    #     if not return_std:
+    #         return mean
+        
+    #     v = tf.linalg.cholesky_solve(L_train, tf.transpose(Sigma_YY_cross))
+    #     var_flat = tf.linalg.diag_part(Sigma_YY_test - tf.matmul(Sigma_YY_cross, v))
+    #     var = tf.reshape(var_flat, [n_test, m])
+        
+    #     var = var + self.noise_var
+    #     std = tf.sqrt(tf.maximum(var, 1e-12)) * self.standardization_scale
+        
+    #     return mean, std.numpy()
+
     def predict(self, X_new, ranges, return_std=False):
         """
-        Makes predictions using the fitted PCGP model.
-
+        Makes predictions using the fitted PCGP model according to Theorems 3.1, 3.3 and 3.4.
+        
         Args:
-            X_new (np.ndarray): New input locations to predict at (m_test x p).
-            ranges (list): List of (min,max) tuples for each parameter for standardizing inputs.
+            X_new (np.ndarray): New input locations to predict at (n_test x input_dim).
+            ranges (list): List of (min, max) tuples for each parameter for standardizing inputs.
             return_std (bool): If True, returns both mean and standard deviation of predictions.
-
+        
         Returns:
-            np.ndarray: Predicted mean values at X_new (m_test x n).
-            (np.ndarray, np.ndarray): If return_std=True, returns tuple of (mean, std) where std has shape (m_test x n).
+            np.ndarray: Predicted mean values at X_new (n_test x output_dim).
+            (np.ndarray, np.ndarray): If return_std=True, returns tuple of (mean, std) 
+                                    where std has shape (n_test x output_dim).
         """
         X_new_std = self.standardize_inputs(X_new, ranges)
-        N = self.X_train_std.shape[0]
-        N_test = X_new_std.shape[0] 
-        q = self.n_components
-        n = self.output_dim 
+        X_new_tf = tf.convert_to_tensor(X_new_std, dtype=tf.float64)
+        X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
+        
+        n_train = self.X_train_std.shape[0]
+        n_test = X_new_std.shape[0]
+        
+        mu_g = np.zeros((n_test, self.n_components))  
+        var_g = np.zeros((n_test, self.n_components)) 
+        
+        for k in range(self.n_components):
+            # from therom 3.1
+            w_k = self.weights[:, k:k+1]  # mk
+            
+            C_k = self._build_kernel_matrix(X_train_tf, component_idx=k)
+            
+            # sk
+            d_k = 1.0 / self.lambda_w[k]
+            C_k_inv = tf.linalg.inv(C_k)
+            S_k = tf.linalg.inv(d_k * tf.eye(n_train, dtype=tf.float64) + C_k_inv)
+            
+            # from theorem 3.3
+            c_k_x = self._build_kernel_matrix(X_new_tf, X_train_tf, component_idx=k)
+            
+            c_k_xx_full = self._build_kernel_matrix(X_new_tf, component_idx=k)
+            c_k_xx_diag = tf.linalg.diag_part(c_k_xx_full)
+            
+            # tk
+            C_k_inv_Sk = tf.matmul(C_k_inv, S_k)
+            T_k = C_k_inv - tf.matmul(C_k_inv_Sk, C_k_inv)
 
-        Sigma_YY = tf.zeros((N * n, N * n), dtype=tf.float64)
-        Phi_tf = tf.constant(self.Phi_basis, dtype=tf.float64)
-
-        for j in range(q):
-            K_j_XX = self._build_kernel_matrix(self.X_train_std, component_idx=j)
-            Phi_j = Phi_tf[:, j][:, None]
-            term_j = self._tf_kron(tf.matmul(Phi_j, tf.transpose(Phi_j)), K_j_XX)
-            Sigma_YY += term_j
-        Sigma_YY += tf.eye(N * n, dtype=tf.float64) * self.noise_var
-        L_Sigma_YY = tf.linalg.cholesky(Sigma_YY)
-
-        Y_cent_flat = tf.constant(self.Y_train_std.flatten(), dtype=tf.float64)[:, None]
-
-        alpha = tf.linalg.cholesky_solve(L_Sigma_YY, Y_cent_flat)
-
-        K_XnewX_matrix = tf.zeros((N_test * n, N * n), dtype=tf.float64)
-
-        for j in range(q):
-            K_j_XnewX = self._build_kernel_matrix(X_new_std, self.X_train_std, component_idx=j) # (N_test x N)
-            Phi_j = Phi_tf[:, j][:, None]
-            term_j = self._tf_kron(tf.matmul(Phi_j, tf.transpose(Phi_j)), K_j_XnewX)
-            K_XnewX_matrix += term_j
-
-        mu_f_flat_std = tf.matmul(K_XnewX_matrix, alpha)
-        mu_f_std = tf.reshape(mu_f_flat_std, (N_test, n)).numpy()
-        pred_mean = self._unstandardize_output(mu_f_std)
-
-        if return_std:
-            # Calculate K(X*,X*)
-            K_XnewXnew_matrix = tf.zeros((N_test * n, N_test * n), dtype=tf.float64)
-            for j in range(q):
-                K_j_XnewXnew = self._build_kernel_matrix(X_new_std, component_idx=j) # (N_test x N_test)
-                Phi_j = Phi_tf[:, j][:, None]
-                term_j = self._tf_kron(tf.matmul(Phi_j, tf.transpose(Phi_j)), K_j_XnewXnew)
-                K_XnewXnew_matrix += term_j
-
-            K_fF = K_XnewX_matrix
-            K_ff = K_XnewXnew_matrix
-
-            v = tf.linalg.cholesky_solve(L_Sigma_YY, tf.transpose(K_fF))
-
-            cov_f = K_ff - tf.matmul(K_fF, v)
-
-            cov_y = cov_f + tf.eye(N_test * n, dtype=tf.float64) * self.noise_var
-
-            pred_var = np.diag(cov_y.numpy()).reshape(N_test, n)
-            pred_var = np.maximum(pred_var, 0) 
-            pred_std = np.sqrt(pred_var) * self.standardization_scale
-            return pred_mean, pred_std
-
-        return pred_mean
+            # u_k(x)
+            alpha = tf.linalg.cholesky_solve(tf.linalg.cholesky(C_k), w_k)
+            mu_k = tf.matmul(c_k_x, alpha)
+            mu_g[:, k] = tf.squeeze(mu_k).numpy()
+            
+            # var_k(x)
+            v = tf.matmul(T_k, tf.transpose(c_k_x))
+            var_k = c_k_xx_diag - tf.reduce_sum(c_k_x * tf.transpose(v), axis=1)
+            var_g[:, k] = tf.maximum(var_k, 1e-12).numpy()
+        
+        # from theorem 3.4
+        phi_tf = tf.convert_to_tensor(self.phi_basis, dtype=tf.float64)
+        mu_y_std = tf.matmul(mu_g, phi_tf, transpose_b=True)
+        
+        # u_g(x)
+        mean_y = self._unstandardize_output(mu_y_std.numpy())
+        
+        if not return_std:
+            return mean_y
+        
+        # cov_y(x)
+        phi_sq = tf.square(phi_tf)  
+        var_y_std = tf.matmul(var_g, phi_sq, transpose_b=True)
+        var_y_std += self.noise_var  
+        
+        std_y = np.sqrt(var_y_std) * self.standardization_scale
+        
+        return mean_y, std_y
 
 class GaussianKernel:
     def __init__(self, variance=1.0, rho=None, input_dim=12):
@@ -277,91 +364,22 @@ class GaussianKernel:
             self.rho.assign(rho)
 
 
-# AI GENERATED TEST (re-run with fixed class)
 def generate_test_data(n_train=50, n_test=20, input_dim=3, output_dim=5):
     np.random.seed(42)
-
     X_train = np.random.uniform(0, 1, (n_train, input_dim))
     ranges = [(0, 1)] * input_dim
-
+    
     def true_func(x):
-        y1 = (x**2).sum(axis=1)
-        y2 = np.sin(x[:, 0]*10) + np.cos(x[:, 1]*5)
-        y3 = np.exp(x[:, 2])
-        y_outputs = [y1, y2, y3]
-
-        if output_dim > len(y_outputs):
-            for i in range(len(y_outputs), output_dim):
-                y_outputs.append(np.sin(x[:, (i % input_dim)] * (i + 1) * 5))
-        elif output_dim < len(y_outputs):
-            y_outputs = y_outputs[:output_dim]
-
-        return np.stack(y_outputs, axis=1)
-
-    Y_train = true_func(X_train)
-
-    Y_train += np.random.normal(0, 0.05, Y_train.shape) # Reduced noise for clearer results
-
+        return np.column_stack((
+            np.sin(x[:, 0] * 2),
+            x[:, 1] ** 2,
+            x[:, 0] * x[:, 2],
+            np.cos(x[:, 1] + x[:, 2]),
+            np.exp(x[:, 0])
+        ))
+    
+    Y_train = true_func(X_train) + np.random.normal(0, 0.05, (n_train, output_dim))
     X_test = np.random.uniform(0, 1, (n_test, input_dim))
     Y_test = true_func(X_test)
-
+    
     return X_train, Y_train, X_test, Y_test, ranges, true_func
-
-n_train_val = 50
-input_dim_val = 3
-output_dim_val = 5
-X_train, Y_train, X_test_dummy, Y_test_dummy, ranges, true_func_global = generate_test_data(n_train=n_train_val, input_dim=input_dim_val, output_dim=output_dim_val)
-
-print("Fitting your PCGP model...")
-your_pcgp = PrincipalComponentGaussianProcessModel(n_components=min(output_dim_val, X_train.shape[0]-1), input_dim=X_train.shape[1], output_dim=Y_train.shape[1])
-your_pcgp.fit(X_train, Y_train, ranges)
-
-
-# input dimension
-input_to_vary_idx = 1 # Let's vary the second input dimension
-
-for output_idx in range(output_dim_val):
-    num_plot_points = 200
-    x_min, x_max = ranges[input_to_vary_idx]
-    X_plot = np.zeros((num_plot_points, input_dim_val))
-
-    # Set the input dimension to vary
-    X_plot[:, input_to_vary_idx] = np.linspace(x_min, x_max, num_plot_points)
-
-    # Set other input dimensions to their training data mean
-    for dim_idx in range(input_dim_val):
-        if dim_idx != input_to_vary_idx:
-            X_plot[:, dim_idx] = np.mean(X_train[:, dim_idx])
-
-    your_pred_mean, your_pred_std = your_pcgp.predict(X_plot, ranges, return_std=True)
-
-    Y_true_plot = true_func_global(X_plot)
-
-    plt.figure(figsize=(10, 6))
-
-    # Plot training observations for the specific output dimension
-    plt.plot(X_train[:, input_to_vary_idx], Y_train[:, output_idx], 'kx', alpha=0.6, label='Training Observations')
-
-    # Plot predicted mean
-    plt.plot(X_plot[:, input_to_vary_idx], your_pred_mean[:, output_idx], 'b-', label='Predicted mean')
-
-    # Plot true function
-    plt.plot(X_plot[:, input_to_vary_idx], Y_true_plot[:, output_idx], 'r-', alpha=0.6, label='True function')
-
-    # Plot 95% confidence interval
-    mean_np = your_pred_mean[:, output_idx]
-    std_np = your_pred_std[:, output_idx]
-
-    plt.fill_between(X_plot[:, input_to_vary_idx].flatten(),
-                    (mean_np - 2 * std_np),
-                    (mean_np + 2 * std_np),
-                    alpha=0.2, color='blue', label='95% Confidence Interval')
-
-    plt.xlabel(f'Input X (Dimension {input_to_vary_idx})')
-    plt.ylabel(f'Output Y (Dimension {output_idx})')
-    plt.title(f'Your PCGP Regression (Output {output_idx})')
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.7)
-
-plt.tight_layout()
-plt.show()
