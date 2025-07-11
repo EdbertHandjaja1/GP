@@ -30,9 +30,16 @@ def test_pca():
     weights_shape_pass = (weights.shape == expected_weights_shape)
     expected_phi_basis_shape = (output_dim, n_components)
     phi_basis_shape_pass = (phi_basis.shape == expected_phi_basis_shape)
+    
+    product = tf.matmul(tf.transpose(phi_basis), phi_basis)
+    identity = tf.eye(phi_basis.shape[1], dtype=product.dtype)  
+    phi_basis_orthogonal_pass = np.allclose(product.numpy(), identity.numpy(), atol=1e-6)
+    print(product)
 
     print("=== PCA Tests ===")
     print(f"Weights shape check:", "PASS" if weights_shape_pass else "FAIL")
     print(f"Phi basis shape check:", "PASS" if phi_basis_shape_pass else "FAIL")
+    print(f"Phi orthogonality check:", "PASS" if phi_basis_orthogonal_pass else "FAIL")
 
 test_pca()
+

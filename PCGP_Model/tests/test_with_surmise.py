@@ -18,28 +18,31 @@ def plot_surmise_testing_predictions(output_dim_to_plot=0):
         output_dim=output_dim,
         )
 
-    theta_train = Y_train.T               
+    x_emu_predict = np.array([[0]])
+    theta_emu_train = X_train 
+    x_emu_train = np.array([[0]]) 
+    f_emu_train = Y_train[:, output_dim_to_plot].reshape(1, -1) 
 
     emu = emulator(
-        x=X_train, 
-        theta=theta_train, 
-        f=Y_train, 
+        x=x_emu_train, 
+        theta=theta_emu_train, 
+        f=f_emu_train, 
         method='PCGP')
 
     emu.fit()
 
-    pred = emu.predict(x=X_test, theta=theta_train)     
+    pred = emu.predict(x=x_emu_predict, theta=X_test)     
 
-    Y_pred_mean = pred.mean()           
-    Y_pred_std  = np.sqrt(pred.var())
+    Y_pred_mean = pred.mean().flatten()           
+    Y_pred_std  = np.sqrt(pred.var()).flatten()
         
     plt.figure(figsize=(12, 7))
     
     sort_idx = np.argsort(X_test[:, 0])
     x_sorted = X_test[sort_idx, 0]
     y_true_sorted = Y_test[sort_idx, output_dim_to_plot]
-    y_pred_sorted = Y_pred_mean[sort_idx, output_dim_to_plot]
-    y_std_sorted = Y_pred_std[sort_idx, output_dim_to_plot]
+    y_pred_sorted = Y_pred_mean[sort_idx]
+    y_std_sorted = Y_pred_std[sort_idx]
     
     true_func_values = true_func(X_test[sort_idx])[:, output_dim_to_plot]
     
@@ -67,7 +70,7 @@ def plot_surmise_testing_predictions(output_dim_to_plot=0):
     
     plt.xlabel('Input Dimension 1')
     plt.ylabel(f'Output Dimension {output_dim_to_plot + 1}')
-    plt.title('Surmise Emulator Predictions at Test Points')
+    plt.title(f'Surmise Emulator Predictions at Test Points')
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.tight_layout()
@@ -83,28 +86,32 @@ def plot_surmise_training_predictions(output_dim_to_plot=0):
         output_dim=output_dim,
         )
 
-    theta_train = Y_train.T               
+    theta_emu_train = X_train 
+    x_emu_train = np.array([[0]])
+    f_emu_train = Y_train[:, output_dim_to_plot].reshape(1, -1) 
 
     emu = emulator(
-        x=X_train, 
-        theta=theta_train, 
-        f=Y_train, 
+        x=x_emu_train, 
+        theta=theta_emu_train, 
+        f=f_emu_train, 
         method='PCGP')
 
     emu.fit()
 
-    pred = emu.predict(x=X_train, theta=theta_train)     
+    x_emu_predict_train = np.array([[0]]) 
 
-    Y_pred_mean = pred.mean()           
-    Y_pred_std  = np.sqrt(pred.var())
+    pred = emu.predict(x=x_emu_predict_train, theta=X_train)     
+
+    Y_pred_mean = pred.mean().flatten()           
+    Y_pred_std  = np.sqrt(pred.var()).flatten()
         
     plt.figure(figsize=(12, 7))
     
     sort_idx = np.argsort(X_train[:, 0])
     x_sorted = X_train[sort_idx, 0]
     y_true_sorted = Y_train[sort_idx, output_dim_to_plot]
-    y_pred_sorted = Y_pred_mean[sort_idx, output_dim_to_plot]
-    y_std_sorted = Y_pred_std[sort_idx, output_dim_to_plot]
+    y_pred_sorted = Y_pred_mean[sort_idx]
+    y_std_sorted = Y_pred_std[sort_idx]
     
     true_func_values = true_func(X_train[sort_idx])[:, output_dim_to_plot]
     
@@ -132,7 +139,7 @@ def plot_surmise_training_predictions(output_dim_to_plot=0):
     
     plt.xlabel('Input Dimension 1')
     plt.ylabel(f'Output Dimension {output_dim_to_plot + 1}')
-    plt.title('Surmise Emulator Predictions at Train Points')
+    plt.title(f'Surmise Emulator Predictions at Train Points')
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.tight_layout()
