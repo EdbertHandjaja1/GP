@@ -2,7 +2,7 @@ import numpy as np
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from pcgp1 import PrincipalComponentGaussianProcessModel, generate_test_data
+from PCGP_MODEL import PrincipalComponentGaussianProcessModel, generate_test_data
 import tensorflow as tf
 
 def test_pca():

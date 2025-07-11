@@ -3,7 +3,7 @@ import numpy as np
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from pcgp1 import PrincipalComponentGaussianProcessModel, generate_test_data
+from PCGP_MODEL import PrincipalComponentGaussianProcessModel, generate_test_data
 
 def plot_pcgp_testing_predictions(output_dim_to_plot=0):
     input_dim = 3
@@ -22,7 +22,6 @@ def plot_pcgp_testing_predictions(output_dim_to_plot=0):
     )
     fitted_model = pcgp.fit(X_train, Y_train, ranges)
 
-    # testing points
     Y_pred_mean, Y_pred_std = fitted_model.predict(X_test, ranges, return_std=True)
     
     plt.figure(figsize=(12, 7))
@@ -54,4 +53,5 @@ def plot_pcgp_testing_predictions(output_dim_to_plot=0):
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.show()
 
-plot_pcgp_testing_predictions()
+if __name__ == "__main__":
+    plot_pcgp_testing_predictions()
