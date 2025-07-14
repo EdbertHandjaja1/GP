@@ -52,13 +52,17 @@ class PrincipalComponentGaussianProcessModel:
 
         s, u, v = tf.linalg.svd(y_transposed, full_matrices=False)
 
+        # s is singular vals (m by m)
+        # u is right orthonormal (m by m)
+        # v is left orthogonal (m by n)
         actual_components = self.n_components
 
-        phi_basis = (tf.linalg.diag(s) @ u / tf.sqrt(n_samples))[:, :actual_components]
+        phi_basis = (u @ tf.linalg.diag(s) / tf.sqrt(n_samples))[:, :actual_components]
 
         weights = tf.sqrt(n_samples) * v[:, :actual_components]
 
         return weights.numpy(), phi_basis.numpy()
+
 
     def _build_kernel_matrix(self, X1, X2=None, component_idx=None):
         if X2 is None:
