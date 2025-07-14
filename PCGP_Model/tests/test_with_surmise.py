@@ -94,13 +94,16 @@ def plot_surmise_training_predictions(output_dim_to_plot=0):
         x=x_emu_train, 
         theta=theta_emu_train, 
         f=f_emu_train, 
-        method='PCGP')
+        method='PCGP',
+        options={'epsilon': 0})
 
     emu.fit()
 
     x_emu_predict_train = np.array([[0]]) 
 
     pred = emu.predict(x=x_emu_predict_train, theta=X_train)     
+
+    print(emu)
 
     Y_pred_mean = pred.mean().flatten()           
     Y_pred_std  = np.sqrt(pred.var()).flatten()
@@ -146,5 +149,5 @@ def plot_surmise_training_predictions(output_dim_to_plot=0):
     plt.show()
 
 if __name__ == "__main__":
-    plot_surmise_testing_predictions(output_dim_to_plot=0)
-    # plot_surmise_training_predictions(output_dim_to_plot=0)
+    # plot_surmise_testing_predictions(output_dim_to_plot=0)
+    plot_surmise_training_predictions(output_dim_to_plot=0)

@@ -22,7 +22,7 @@ def plot_pcgp_training_predictions(output_dim_to_plot=0):
     )
 
     pcgp = PrincipalComponentGaussianProcessModel(
-        n_components=n_components,
+        n_components=3,
         input_dim=input_dim,
         output_dim=output_dim
     )

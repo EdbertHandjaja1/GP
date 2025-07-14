@@ -15,6 +15,7 @@ class PrincipalComponentGaussianProcessModel:
         self.weights = None
         self.phi_basis = None
         self.X_train = None
+        self.Y_train = None
         self.X_train_std = None
         self.Y_train_std = None
         self.rho = np.ones((n_components, input_dim)) * 0.1
@@ -35,9 +36,9 @@ class PrincipalComponentGaussianProcessModel:
     def _standardize_output(self, Y):
         self.standardization_mean = np.mean(Y, axis=0)
         Y_centered = Y - self.standardization_mean
-        self.standardization_scale = np.sqrt(np.mean(Y_centered ** 2))
-        if self.standardization_scale == 0:
-            self.standardization_scale = 1.0
+        self.standardization_scale = np.sqrt(np.mean(Y_centered ** 2, axis=0))
+        # if self.standardization_scale == 0:
+        #     self.standardization_scale = 1.0
         return Y_centered / self.standardization_scale
 
     def _unstandardize_output(self, Y_standardized):
@@ -45,12 +46,24 @@ class PrincipalComponentGaussianProcessModel:
 
     def compute_principal_components(self, Y_standardized):
         y_tensor = tf.convert_to_tensor(Y_standardized, dtype=tf.float64)
-        s, u, v = tf.linalg.svd(y_tensor, full_matrices=False)
-        actual_components = min(self.n_components, s.shape[0], v.shape[0])
-        phi_basis = tf.transpose(v[:actual_components, :]).numpy()
-        weights = (u[:, :actual_components] @ tf.linalg.diag(s[:actual_components])).numpy()        
-        return weights, phi_basis
-    
+        y_transposed = tf.transpose(y_tensor)
+
+        n_samples = tf.cast(tf.shape(y_tensor)[0], dtype=tf.float64)
+
+        s, u, v = tf.linalg.svd(y_transposed, full_matrices=False)
+
+        actual_components = self.n_components
+
+        s_k = s[:actual_components]
+        u_k = u[:, :actual_components]
+        v_k = v[:, :actual_components]
+
+        phi_basis = (u_k @ tf.linalg.diag(s_k)) / tf.sqrt(n_samples)
+
+        weights = tf.sqrt(n_samples) * v_k
+
+        return weights.numpy(), phi_basis.numpy()
+
     def _build_kernel_matrix(self, X1, X2=None, component_idx=None):
         if X2 is None:
             X2 = X1
@@ -119,6 +132,7 @@ class PrincipalComponentGaussianProcessModel:
         Fits the PCGP model to training data
         """
         self.X_train = X_train
+        self.Y_train = Y_train
         self.X_train_std = self.standardize_inputs(X_train, ranges)
         self.Y_train_std = self._standardize_output(Y_train)
         self.weights, self.phi_basis = self.compute_principal_components(self.Y_train_std)
