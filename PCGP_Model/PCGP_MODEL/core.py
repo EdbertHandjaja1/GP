@@ -54,13 +54,9 @@ class PrincipalComponentGaussianProcessModel:
 
         actual_components = self.n_components
 
-        s_k = s[:actual_components]
-        u_k = u[:, :actual_components]
-        v_k = v[:, :actual_components]
+        phi_basis = (tf.linalg.diag(s) @ u / tf.sqrt(n_samples))[:, :actual_components]
 
-        phi_basis = (u_k @ tf.linalg.diag(s_k)) / tf.sqrt(n_samples)
-
-        weights = tf.sqrt(n_samples) * v_k
+        weights = tf.sqrt(n_samples) * v[:, :actual_components]
 
         return weights.numpy(), phi_basis.numpy()
 
