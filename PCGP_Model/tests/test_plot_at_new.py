@@ -34,6 +34,13 @@ def plot_pcgp_testing_predictions(output_dim_to_plot=0):
 
     true_func_values = true_func(X_test[sort_idx])[:, output_dim_to_plot]
 
+    print(np.round(
+        np.c_[x_sorted,
+                y_true_sorted,
+                y_pred_sorted,
+                y_pred_sorted - 2*y_std_sorted,
+                y_pred_sorted + 2*y_std_sorted], 3)[:8])
+
     plt.scatter(x_sorted, y_true_sorted, c='black', marker='x', 
                 s=100, label='True Test Values')
     

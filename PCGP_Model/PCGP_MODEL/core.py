@@ -95,7 +95,7 @@ class PrincipalComponentGaussianProcessModel:
             w_k = tf.constant(self.weights[:, k:k+1], dtype=tf.float64)
             K_k = self._build_kernel_matrix(self.X_train_std, component_idx=k)
 
-            Sigma_k = K_k + tf.eye(n, dtype=tf.float64)
+            Sigma_k = K_k + self.noise_var * tf.eye(n, dtype=tf.float64)
             L_k = tf.linalg.cholesky(Sigma_k)
 
             # term 1
