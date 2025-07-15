@@ -44,25 +44,44 @@ class PrincipalComponentGaussianProcessModel:
     def _unstandardize_output(self, Y_standardized):
         return Y_standardized * self.standardization_scale + self.standardization_mean
 
+    # weights variance not 1
+    # def compute_principal_components(self, Y_standardized):
+    #     y_tensor = tf.convert_to_tensor(Y_standardized, dtype=tf.float64)
+        
+    #     n = tf.cast(tf.shape(y_tensor)[0], dtype=tf.float64)
+        
+    #     s, u, v = tf.linalg.svd(y_tensor, full_matrices=False)
+        
+    #     q = self.n_components
+        
+    #     weights = 1 / tf.sqrt(n) * tf.matmul(u, tf.linalg.diag(s))[:, :q]  # (n x q)
+    #     phi_basis = tf.sqrt(n) * tf.transpose(v)[:, :q]  # (m x q)
+        
+    #     return weights.numpy(), phi_basis.numpy()
+
     def compute_principal_components(self, Y_standardized):
         y_tensor = tf.convert_to_tensor(Y_standardized, dtype=tf.float64)
-        y_transposed = tf.transpose(y_tensor)
+        
+        n = tf.cast(tf.shape(y_tensor)[0], dtype=tf.float64) 
+        m = tf.cast(tf.shape(y_tensor)[1], dtype=tf.float64) 
 
-        n_samples = tf.cast(tf.shape(y_tensor)[0], dtype=tf.float64)
+        s, u, v = tf.linalg.svd(y_tensor, full_matrices=False)
+        
+        q = self.n_components
+        
+        u_q = u[:, :q]
+        s_q = tf.linalg.diag(s[:q])
+        v_q = v[:, :q] 
 
-        s, u, v = tf.linalg.svd(y_transposed, full_matrices=False)
+        w_raw = tf.matmul(u_q, s_q) # (n x q)
+        
+        std_devs = tf.math.reduce_std(w_raw, axis=0)
 
-        # s is singular vals (m by m)
-        # u is right orthonormal (m by m)
-        # v is left orthogonal (m by n)
-        actual_components = self.n_components
+        weights = w_raw / std_devs # (n x q)
 
-        phi_basis = (u @ tf.linalg.diag(s) / tf.sqrt(n_samples))[:, :actual_components]
-
-        weights = tf.sqrt(n_samples) * v[:, :actual_components]
+        phi_basis = tf.matmul(v_q, tf.linalg.diag(std_devs)) # (m x q)
 
         return weights.numpy(), phi_basis.numpy()
-
 
     def _build_kernel_matrix(self, X1, X2=None, component_idx=None):
         if X2 is None:
