@@ -428,3 +428,77 @@ def generate_test_data(n_train=50, n_test=20, input_dim=3, output_dim=5):
     
     return X_train, Y_train, X_test, Y_test, ranges, true_func
 
+
+    # def predict(self, X_new, ranges, return_std=False):
+    #     """
+    #     Makes predictions using the fitted PCGP model according to Theorems 3.1, 3.3 and 3.4.
+        
+    #     Args:
+    #         X_new (np.ndarray): New input locations to predict at (n_test x input_dim).
+    #         ranges (list): List of (min, max) tuples for each parameter for standardizing inputs.
+    #         return_std (bool): If True, returns both mean and standard deviation of predictions.
+        
+    #     Returns:
+    #         np.ndarray: Predicted mean values at X_new (n_test x output_dim).
+    #         (np.ndarray, np.ndarray): If return_std=True, returns tuple of (mean, std) 
+    #                                 where std has shape (n_test x output_dim).
+    #     """
+    #     X_new_std = self.standardize_inputs(X_new, ranges)
+    #     X_new_tf = tf.convert_to_tensor(X_new_std, dtype=tf.float64)
+    #     X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
+        
+    #     n_train = self.X_train_std.shape[0]
+    #     n_test = X_new_std.shape[0]
+        
+    #     mu_g = np.zeros((n_test, self.n_components))  
+    #     var_g = np.zeros((n_test, self.n_components)) 
+        
+    #     for k in range(self.n_components):
+    #         # from therom 3.1
+    #         w_k = self.weights[:, k:k+1]  # mk
+            
+    #         C_k = self._build_kernel_matrix(X_train_tf, component_idx=k)
+            
+    #         # sk
+    #         d_k = 1.0 / self.lambda_w[k]
+    #         C_k_inv = tf.linalg.inv(C_k)
+    #         S_k = tf.linalg.inv(d_k * tf.eye(n_train, dtype=tf.float64) + C_k_inv)
+            
+    #         # from theorem 3.3
+    #         c_k_x = self._build_kernel_matrix(X_new_tf, X_train_tf, component_idx=k)
+            
+    #         c_k_xx_full = self._build_kernel_matrix(X_new_tf, component_idx=k)
+    #         c_k_xx_diag = tf.linalg.diag_part(c_k_xx_full)
+            
+    #         # tk
+    #         C_k_inv_Sk = tf.matmul(C_k_inv, S_k)
+    #         T_k = C_k_inv - tf.matmul(C_k_inv_Sk, C_k_inv)
+
+    #         # u_k(x)
+    #         alpha = tf.linalg.cholesky_solve(tf.linalg.cholesky(C_k), w_k)
+    #         mu_k = tf.matmul(c_k_x, alpha)
+    #         mu_g[:, k] = tf.squeeze(mu_k).numpy()
+            
+    #         # var_k(x)
+    #         v = tf.matmul(T_k, tf.transpose(c_k_x))
+    #         var_k = c_k_xx_diag - tf.reduce_sum(c_k_x * tf.transpose(v), axis=1)
+    #         var_g[:, k] = tf.maximum(var_k, 1e-12).numpy()
+        
+    #     # from theorem 3.4
+    #     phi_tf = tf.convert_to_tensor(self.phi_basis, dtype=tf.float64)
+    #     mu_y_std = tf.matmul(mu_g, phi_tf, transpose_b=True)
+        
+    #     # u_g(x)
+    #     mean_y = self._unstandardize_output(mu_y_std.numpy())
+        
+    #     if not return_std:
+    #         return mean_y
+        
+    #     # cov_y(x)
+    #     phi_sq = tf.square(phi_tf)  
+    #     var_y_std = tf.matmul(var_g, phi_sq, transpose_b=True)
+    #     var_y_std += self.noise_var  
+        
+    #     std_y = np.sqrt(var_y_std) * self.standardization_scale
+        
+    #     return mean_y, std_y

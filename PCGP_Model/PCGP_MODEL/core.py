@@ -47,16 +47,11 @@ class PrincipalComponentGaussianProcessModel:
     # weights variance not 1
     # def compute_principal_components(self, Y_standardized):
     #     y_tensor = tf.convert_to_tensor(Y_standardized, dtype=tf.float64)
-        
     #     n = tf.cast(tf.shape(y_tensor)[0], dtype=tf.float64)
-        
     #     s, u, v = tf.linalg.svd(y_tensor, full_matrices=False)
-        
     #     q = self.n_components
-        
     #     weights = 1 / tf.sqrt(n) * tf.matmul(u, tf.linalg.diag(s))[:, :q]  # (n x q)
     #     phi_basis = tf.sqrt(n) * tf.transpose(v)[:, :q]  # (m x q)
-        
     #     return weights.numpy(), phi_basis.numpy()
 
     def compute_principal_components(self, Y_standardized):
@@ -64,9 +59,7 @@ class PrincipalComponentGaussianProcessModel:
         
         n = tf.cast(tf.shape(y_tensor)[0], dtype=tf.float64) 
         m = tf.cast(tf.shape(y_tensor)[1], dtype=tf.float64) 
-
         s, u, v = tf.linalg.svd(y_tensor, full_matrices=False)
-        
         q = self.n_components
         
         weights_raw = (1 / tf.sqrt(n)) * tf.matmul(u, tf.linalg.diag(s))[:, :q]
@@ -74,7 +67,6 @@ class PrincipalComponentGaussianProcessModel:
         std_devs = tf.math.reduce_std(weights_raw, axis=0)
         
         weights = weights_raw / std_devs  # (n x q)
-        
         phi_basis = tf.sqrt(n) * tf.matmul(v[:, :q], tf.linalg.diag(std_devs))  # (m x q)
         
         return weights.numpy(), phi_basis.numpy()
@@ -141,7 +133,7 @@ class PrincipalComponentGaussianProcessModel:
             total_nll += nll_k
 
         return tf.cast(total_nll, dtype=tf.float64).numpy()
-    
+
     def fit(self, X_train, Y_train, ranges):
         """
         Fits the PCGP model to training data
@@ -213,45 +205,12 @@ class PrincipalComponentGaussianProcessModel:
 
         return self
 
-
-    # def fit(self, X_train, Y_train, ranges):
-    #     """
-    #     Fits the PCGP model to training data with hardcoded optimal parameters
-    #     """
-    #     # Store and standardize training data
-    #     self.X_train = X_train
-    #     self.Y_train = Y_train
-    #     self.X_train_std = self.standardize_inputs(X_train, ranges)
-    #     self.Y_train_std = self._standardize_output(Y_train)
-        
-    #     self.weights, self.phi_basis = self.compute_principal_components(self.Y_train_std)
-        
-    #     self.rho = np.array([[0.64, 13.1, 12.6]]) 
-    #     self.lambda_w = np.array([1.0])  
-    #     self.noise_var = 0.011784148477235577
-    # 
-    #     final_nll = self._negative_log_marginal_likelihood(
-    #         self.rho.flatten(),
-    #         self.lambda_w,
-    #         self.noise_var
-    #     )
-        
-    #     return self
-
-    def predict(self, X_new, ranges, return_std=False):
+    def predict(self, X_new, ranges, return_std=False, debug=True):
         """
-        Makes predictions using the fitted PCGP model according to Theorems 3.1, 3.3 and 3.4.
-        
-        Args:
-            X_new (np.ndarray): New input locations to predict at (n_test x input_dim).
-            ranges (list): List of (min, max) tuples for each parameter for standardizing inputs.
-            return_std (bool): If True, returns both mean and standard deviation of predictions.
-        
-        Returns:
-            np.ndarray: Predicted mean values at X_new (n_test x output_dim).
-            (np.ndarray, np.ndarray): If return_std=True, returns tuple of (mean, std) 
-                                    where std has shape (n_test x output_dim).
+        Makes predictions using the fitted PCGP model with GPflow comparison at each component.
         """
+        import gpflow
+        
         X_new_std = self.standardize_inputs(X_new, ranges)
         X_new_tf = tf.convert_to_tensor(X_new_std, dtype=tf.float64)
         X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
@@ -267,8 +226,8 @@ class PrincipalComponentGaussianProcessModel:
             
             K_k = self._build_kernel_matrix(X_train_tf, component_idx=k)
             k_star = self._build_kernel_matrix(X_new_tf, X_train_tf, component_idx=k)
-            k_star_star_diag = tf.linalg.diag_part(self._build_kernel_matrix(X_new_tf, component_idx=k))            
-
+            k_star_star_diag = tf.linalg.diag_part(self._build_kernel_matrix(X_new_tf, component_idx=k))
+            
             Sigma_k = K_k + self.noise_var * tf.eye(n_train, dtype=tf.float64)
             L_k = tf.linalg.cholesky(Sigma_k)
             
@@ -280,6 +239,51 @@ class PrincipalComponentGaussianProcessModel:
                 v_k = tf.linalg.cholesky_solve(L_k, tf.transpose(k_star))
                 var_k = k_star_star_diag - tf.reduce_sum(tf.square(v_k), axis=0)
                 var_g[:, k] = tf.maximum(var_k, 1e-12).numpy()
+            
+            print(f"\n=== Component {k} Comparison ===")
+            print(f"PCGP params - rho: {self.rho[k]}, lambda_w: {self.lambda_w[k]}, noise_var: {self.noise_var}")
+            
+            kernel = gpflow.kernels.SquaredExponential(
+                variance=1.0/self.lambda_w[k],
+                lengthscales=self.rho[k]
+            )
+            
+            gpflow_K_k = kernel(X_train_tf, X_train_tf)
+            gpflow_k_star = kernel(X_new_tf, X_train_tf)
+            gpflow_k_star_star_diag = tf.linalg.diag_part(kernel(X_new_tf, X_new_tf))
+
+            print(f"\n--- Kernel Matrix Comparison (Component {k}) ---")
+            print(f"K_k diff max: {tf.reduce_max(tf.abs(K_k - gpflow_K_k)).numpy()}")
+            print(f"k_star diff max: {tf.reduce_max(tf.abs(k_star - gpflow_k_star)).numpy()}")
+            print(f"k_star_star_diag diff max: {tf.reduce_max(tf.abs(k_star_star_diag - gpflow_k_star_star_diag)).numpy()}")
+
+            model = gpflow.models.GPR(
+                data=(self.X_train_std, self.weights[:, k:k+1]),
+                kernel=kernel,
+                noise_variance=self.noise_var
+            )
+            
+            # compare predictions
+            gpflow_mean, gpflow_var_from_predict_f = model.predict_f(X_new_std) 
+            
+            K_xx_plus_noise_gpflow = gpflow_K_k + self.noise_var * tf.eye(n_train, dtype=tf.float64)
+            L_xx_gpflow = tf.linalg.cholesky(K_xx_plus_noise_gpflow)
+            A_inv_K_xt = tf.linalg.cholesky_solve(L_xx_gpflow, tf.transpose(gpflow_k_star))
+            subtracted_term_gpflow_cholesky = tf.reduce_sum(tf.square(A_inv_K_xt), axis=0)
+            var_k_gpflow = gpflow_k_star_star_diag - subtracted_term_gpflow_cholesky
+            
+            print("\nPCGP vs GPflow predictions:")
+            print(f"{'Index':<6} {'PCGP Mean':<12} {'GPflow Mean':<12} {'Diff':<12}")
+            for i in range(min(5, n_test)):
+                diff = abs(mu_g[i,k] - gpflow_mean[i,0].numpy())
+                print(f"{i:<6} {mu_g[i,k]:<12.6f} {gpflow_mean[i,0].numpy():<12.6f} {diff:<12.6f}")
+            
+            if return_std:
+                print("\nPCGP vs GPflow variances:")
+                print(f"{'Index':<6} {'PCGP Var':<12.6} {'GPflow Var':<12.6} {'Diff':<12.6}")
+                for i in range(min(5, n_test)):
+                    diff_pcgp_recalc = abs(var_g[i,k] - var_k_gpflow[i].numpy())
+                    print(f"{i:<6} {var_g[i,k]:<12.6f} {var_k_gpflow[i].numpy():<12.6f} {diff_pcgp_recalc:<12.6f}")
         
         phi_tf = tf.convert_to_tensor(self.phi_basis, dtype=tf.float64)
         mu_y_std = tf.matmul(mu_g, phi_tf, transpose_b=True)
@@ -294,5 +298,5 @@ class PrincipalComponentGaussianProcessModel:
         var_y_std += self.noise_var  
         
         std_y = np.sqrt(var_y_std) * self.standardization_scale
-        
+
         return mean_y, std_y

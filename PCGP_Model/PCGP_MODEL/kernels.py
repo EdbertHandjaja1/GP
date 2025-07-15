@@ -26,3 +26,5 @@ class GaussianKernel:
         self.variance.assign(variance)
         if rho is not None:
             self.rho.assign(rho)
+
+            
