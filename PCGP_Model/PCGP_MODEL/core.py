@@ -69,18 +69,14 @@ class PrincipalComponentGaussianProcessModel:
         
         q = self.n_components
         
-        u_q = u[:, :q]
-        s_q = tf.linalg.diag(s[:q])
-        v_q = v[:, :q] 
-
-        w_raw = tf.matmul(u_q, s_q) # (n x q)
+        weights_raw = (1 / tf.sqrt(n)) * tf.matmul(u, tf.linalg.diag(s))[:, :q]
         
-        std_devs = tf.math.reduce_std(w_raw, axis=0)
-
-        weights = w_raw / std_devs # (n x q)
-
-        phi_basis = tf.matmul(v_q, tf.linalg.diag(std_devs)) # (m x q)
-
+        std_devs = tf.math.reduce_std(weights_raw, axis=0)
+        
+        weights = weights_raw / std_devs  # (n x q)
+        
+        phi_basis = tf.sqrt(n) * tf.matmul(v[:, :q], tf.linalg.diag(std_devs))  # (m x q)
+        
         return weights.numpy(), phi_basis.numpy()
 
     def _build_kernel_matrix(self, X1, X2=None, component_idx=None):
@@ -217,6 +213,31 @@ class PrincipalComponentGaussianProcessModel:
 
         return self
 
+
+    # def fit(self, X_train, Y_train, ranges):
+    #     """
+    #     Fits the PCGP model to training data with hardcoded optimal parameters
+    #     """
+    #     # Store and standardize training data
+    #     self.X_train = X_train
+    #     self.Y_train = Y_train
+    #     self.X_train_std = self.standardize_inputs(X_train, ranges)
+    #     self.Y_train_std = self._standardize_output(Y_train)
+        
+    #     self.weights, self.phi_basis = self.compute_principal_components(self.Y_train_std)
+        
+    #     self.rho = np.array([[0.64, 13.1, 12.6]]) 
+    #     self.lambda_w = np.array([1.0])  
+    #     self.noise_var = 0.011784148477235577
+    # 
+    #     final_nll = self._negative_log_marginal_likelihood(
+    #         self.rho.flatten(),
+    #         self.lambda_w,
+    #         self.noise_var
+    #     )
+        
+    #     return self
+
     def predict(self, X_new, ranges, return_std=False):
         """
         Makes predictions using the fitted PCGP model according to Theorems 3.1, 3.3 and 3.4.
@@ -242,47 +263,32 @@ class PrincipalComponentGaussianProcessModel:
         var_g = np.zeros((n_test, self.n_components)) 
         
         for k in range(self.n_components):
-            # from therom 3.1
-            w_k = self.weights[:, k:k+1]  # mk
+            w_k = tf.constant(self.weights[:, k:k+1], dtype=tf.float64)
             
-            C_k = self._build_kernel_matrix(X_train_tf, component_idx=k)
-            
-            # sk
-            d_k = 1.0 / self.lambda_w[k]
-            C_k_inv = tf.linalg.inv(C_k)
-            S_k = tf.linalg.inv(d_k * tf.eye(n_train, dtype=tf.float64) + C_k_inv)
-            
-            # from theorem 3.3
-            c_k_x = self._build_kernel_matrix(X_new_tf, X_train_tf, component_idx=k)
-            
-            c_k_xx_full = self._build_kernel_matrix(X_new_tf, component_idx=k)
-            c_k_xx_diag = tf.linalg.diag_part(c_k_xx_full)
-            
-            # tk
-            C_k_inv_Sk = tf.matmul(C_k_inv, S_k)
-            T_k = C_k_inv - tf.matmul(C_k_inv_Sk, C_k_inv)
+            K_k = self._build_kernel_matrix(X_train_tf, component_idx=k)
+            k_star = self._build_kernel_matrix(X_new_tf, X_train_tf, component_idx=k)
+            k_star_star_diag = tf.linalg.diag_part(self._build_kernel_matrix(X_new_tf, component_idx=k))            
 
-            # u_k(x)
-            alpha = tf.linalg.cholesky_solve(tf.linalg.cholesky(C_k), w_k)
-            mu_k = tf.matmul(c_k_x, alpha)
+            Sigma_k = K_k + self.noise_var * tf.eye(n_train, dtype=tf.float64)
+            L_k = tf.linalg.cholesky(Sigma_k)
+            
+            alpha_k = tf.linalg.cholesky_solve(L_k, w_k)
+            mu_k = tf.matmul(k_star, alpha_k)
             mu_g[:, k] = tf.squeeze(mu_k).numpy()
             
-            # var_k(x)
-            v = tf.matmul(T_k, tf.transpose(c_k_x))
-            var_k = c_k_xx_diag - tf.reduce_sum(c_k_x * tf.transpose(v), axis=1)
-            var_g[:, k] = tf.maximum(var_k, 1e-12).numpy()
+            if return_std:
+                v_k = tf.linalg.cholesky_solve(L_k, tf.transpose(k_star))
+                var_k = k_star_star_diag - tf.reduce_sum(tf.square(v_k), axis=0)
+                var_g[:, k] = tf.maximum(var_k, 1e-12).numpy()
         
-        # from theorem 3.4
         phi_tf = tf.convert_to_tensor(self.phi_basis, dtype=tf.float64)
         mu_y_std = tf.matmul(mu_g, phi_tf, transpose_b=True)
         
-        # u_g(x)
         mean_y = self._unstandardize_output(mu_y_std.numpy())
         
         if not return_std:
             return mean_y
         
-        # cov_y(x)
         phi_sq = tf.square(phi_tf)  
         var_y_std = tf.matmul(var_g, phi_sq, transpose_b=True)
         var_y_std += self.noise_var  
