@@ -8,13 +8,11 @@ def generate_test_data(n_train=50, n_test=20, input_dim=3, output_dim=5,
     Parameters:
     - function_type: 
         'default' - original
-        'polynomial' - polynomial relationships
-        'trigonometric' - trigonometric functions only
-        'exponential' - exponential relationships
-        'multiplicative' - multiplicative interactions
-        'complex' - more complex combination
-    - noise_level: standard deviation of Gaussian noise
-    - random_seed: for reproducibility
+        'polynomial' - polynomial relationship
+        'trigonometric' - trigonometric function
+        'exponential' - exponential relationship
+        'multiplicative' - multiplicative interaction
+        'complex' - more complex function
     """
     np.random.seed(random_seed)
     X_train = np.random.uniform(0, 1, (n_train, input_dim))
