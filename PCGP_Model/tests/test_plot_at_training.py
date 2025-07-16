@@ -18,6 +18,7 @@ def plot_pcgp_training_predictions(output_dim_to_plot=0):
     X_train, Y_train, _, _, ranges, true_func = generate_test_data(
         input_dim=input_dim, 
         output_dim=output_dim,
+        function_type='polynomial'
     )
 
     Y_train_single = Y_train[:, output_dim_to_plot].reshape(-1, 1)

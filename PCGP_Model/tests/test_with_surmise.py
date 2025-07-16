@@ -16,7 +16,8 @@ def plot_surmise_testing_predictions(output_dim_to_plot=0):
     X_train, Y_train, X_test, Y_test, ranges, true_func = generate_test_data(
         input_dim=input_dim,
         output_dim=output_dim,
-        )
+        function_type='polynomial'
+    )
 
     x_emu_predict = np.array([[0]])
     theta_emu_train = X_train 
@@ -84,7 +85,8 @@ def plot_surmise_training_predictions(output_dim_to_plot=0):
     X_train, Y_train, _, _, _, true_func = generate_test_data(
         input_dim=input_dim,
         output_dim=output_dim,
-        )
+        function_type='polynomial'
+    )
 
     theta_emu_train = X_train 
     x_emu_train = np.array([[0]])
