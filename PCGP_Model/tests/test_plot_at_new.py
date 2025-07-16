@@ -15,12 +15,14 @@ def plot_pcgp_testing_predictions(output_dim_to_plot=0):
         output_dim=output_dim,
     )
 
+    Y_train_single = Y_train[:, output_dim_to_plot].reshape(-1, 1)
+
     pcgp = PrincipalComponentGaussianProcessModel(
-        n_components=n_components,
+        n_components=1,
         input_dim=input_dim,
-        output_dim=output_dim
+        output_dim=1
     )
-    fitted_model = pcgp.fit(X_train, Y_train, ranges)
+    fitted_model = pcgp.fit(X_train, Y_train_single, ranges)
 
     Y_pred_mean, Y_pred_std = fitted_model.predict(X_test, ranges, return_std=True)
     
@@ -48,10 +50,11 @@ def plot_pcgp_testing_predictions(output_dim_to_plot=0):
              markersize=6, label='Predicted mean')
     plt.plot(x_sorted, true_func_values, 'r-', linewidth=3, 
              label='True function')
+    noise_level = np.sqrt(pcgp.noise_var) * pcgp.standardization_scale
     plt.fill_between(x_sorted,
-             (y_pred_sorted - 2 * y_std_sorted),
-             (y_pred_sorted + 2 * y_std_sorted),
-             alpha=0.2, color='blue', label='95% Confidence Interval')
+                    true_func_values - 2*noise_level,
+                    true_func_values + 2*noise_level,
+                    alpha=0.1, color='blue', label='True noise level')
 
     plt.xlabel('Input Dimension 1')
     plt.ylabel(f'Output Dimension {output_dim_to_plot + 1}')
