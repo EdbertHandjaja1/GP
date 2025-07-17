@@ -13,10 +13,11 @@ def plot_pcgp_testing_predictions(output_dim_to_plot=0):
     X_train, Y_train, X_test, Y_test, ranges, true_func = generate_test_data(
         input_dim=input_dim, 
         output_dim=output_dim,
-        function_type='multiplicative'
+        function_type='default'
     )
 
     Y_train_single = Y_train[:, output_dim_to_plot].reshape(-1, 1)
+    Y_test_single = Y_test[:, output_dim_to_plot].reshape(-1, 1)
 
     pcgp = PrincipalComponentGaussianProcessModel(
         n_components=1,
@@ -27,6 +28,15 @@ def plot_pcgp_testing_predictions(output_dim_to_plot=0):
 
     Y_pred_mean, Y_pred_std = fitted_model.predict(X_test, ranges, return_std=True)
     
+    test_rmse = np.sqrt(np.mean((Y_pred_mean - Y_test_single) ** 2))
+
+    print("\n" + "="*50)
+    print(f"{'RMSE':^50}")
+    print("="*50)
+    print(f"{'RMSE:':<20}{test_rmse:.4f}")
+    print("="*50 + "\n")
+
+
     plt.figure(figsize=(12, 7))
     
     sort_idx = np.argsort(X_test[:, 0])

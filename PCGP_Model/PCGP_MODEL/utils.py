@@ -4,15 +4,6 @@ def generate_test_data(n_train=50, n_test=20, input_dim=3, output_dim=5,
                      function_type='default', noise_level=0.05, random_seed=42):
     """
     Generate test data with different function types.
-    
-    Parameters:
-    - function_type: 
-        'default' - original
-        'polynomial' - polynomial relationship
-        'trigonometric' - trigonometric function
-        'exponential' - exponential relationship
-        'multiplicative' - multiplicative interaction
-        'complex' - more complex function
     """
     np.random.seed(random_seed)
     X_train = np.random.uniform(0, 1, (n_train, input_dim))
@@ -87,4 +78,4 @@ def generate_test_data(n_train=50, n_test=20, input_dim=3, output_dim=5,
     X_test = np.random.uniform(0, 1, (n_test, input_dim))
     Y_test = true_func(X_test) 
     
-    return X_train, Y_train, X_test, Y_test, ranges, true_func
+    return X_train, Y_train, X_test, Y_test, ranges, true_func 

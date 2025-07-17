@@ -15,10 +15,10 @@ def plot_pcgp_training_predictions(output_dim_to_plot=0):
     input_dim = 3
     output_dim = 5
     
-    X_train, Y_train, _, _, ranges, true_func = generate_test_data(
+    X_train, Y_train, _, Y_test, ranges, true_func = generate_test_data(
         input_dim=input_dim, 
         output_dim=output_dim,
-        function_type='polynomial'
+        function_type='default'
     )
 
     Y_train_single = Y_train[:, output_dim_to_plot].reshape(-1, 1)
@@ -32,6 +32,14 @@ def plot_pcgp_training_predictions(output_dim_to_plot=0):
 
     Y_pred_mean, Y_pred_std = fitted_model.predict(X_train, ranges, return_std=True)
     
+    train_rmse = np.sqrt(np.mean((Y_pred_mean - Y_train_single) ** 2))
+
+    print("\n" + "="*50)
+    print(f"{'RMSE':^50}")
+    print("="*50)
+    print(f"{'RMSE:':<20}{train_rmse:.4f}")
+    print("="*50 + "\n")
+
     plt.figure(figsize=(12, 7))
     
     sort_idx = np.argsort(X_train[:, 0])
