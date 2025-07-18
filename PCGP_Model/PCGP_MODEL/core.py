@@ -3,7 +3,6 @@ import tensorflow as tf
 import scipy as scipy
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
-# Assuming PCGP_MODEL.kernels.GaussianKernel is correctly imported
 from PCGP_MODEL.kernels import GaussianKernel
 
 class PrincipalComponentGaussianProcessModel:
