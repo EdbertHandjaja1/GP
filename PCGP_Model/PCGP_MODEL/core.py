@@ -195,10 +195,8 @@ class PrincipalComponentGaussianProcessModel:
 
         return self
 
+
     def predict(self, X_new, ranges, return_std=False, debug=True):
-        """
-        Makes predictions using the fitted PCGP model with GPflow comparison at each component.
-        """
         X_new_std = self.standardize_inputs(X_new, ranges)
         X_new_tf = tf.convert_to_tensor(X_new_std, dtype=tf.float64)
         X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
@@ -207,12 +205,12 @@ class PrincipalComponentGaussianProcessModel:
         n_test = X_new_std.shape[0]
         
         mu_g = np.zeros((n_test, self.n_components))
- 
-        if return_std:
-            cov_g = np.zeros((n_test * self.n_components, n_test * self.n_components))
         
+        var_y_std = np.zeros((n_test, self.output_dim)) 
+
         for k in range(self.n_components):
             w_k = tf.constant(self.weights[:, k:k+1], dtype=tf.float64)
+            phi_k = tf.constant(self.phi_basis[:, k:k+1], dtype=tf.float64)
             
             K_k = self._build_kernel_matrix(X_train_tf, component_idx=k)
             k_star = self._build_kernel_matrix(X_new_tf, X_train_tf, component_idx=k)
@@ -227,12 +225,14 @@ class PrincipalComponentGaussianProcessModel:
             
             if return_std:
                 v_k = tf.linalg.cholesky_solve(L_k, tf.transpose(k_star))  
+
                 Cov_k = k_star_star - tf.matmul(k_star, v_k)
-  
-                start_idx = k * n_test
-                end_idx = (k + 1) * n_test
-                cov_g[start_idx:end_idx, start_idx:end_idx] = Cov_k.numpy()
-        
+
+                diag_Cov_k = tf.linalg.diag_part(Cov_k).numpy() 
+
+                var_contrib_k = np.outer(diag_Cov_k, self.phi_basis[:, k]**2) 
+                var_y_std += var_contrib_k
+
         phi_tf = tf.convert_to_tensor(self.phi_basis, dtype=tf.float64)
         mu_y_std = tf.matmul(mu_g, phi_tf, transpose_b=True)
         mean_y = self._unstandardize_output(mu_y_std.numpy())
@@ -240,22 +240,74 @@ class PrincipalComponentGaussianProcessModel:
         if not return_std:
             return mean_y
         
-        phi_together = np.zeros((n_test * self.output_dim, n_test * self.n_components))
-        
-        for i in range(n_test):
-            for j in range(self.n_components):
-                row_start = i * self.output_dim
-                row_end = (i + 1) * self.output_dim
-                col_idx = i * self.n_components + j
-                
-                phi_together[row_start:row_end, col_idx] = self.phi_basis[:, j]
-   
-        temp = np.dot(phi_together, cov_g)
-        cov_y_std = np.dot(temp, phi_together.T)
-        cov_y_std += self.noise_var * np.eye(n_test * self.output_dim)
+        var_y_std += self.noise_var 
 
-        var_y_std = np.diag(cov_y_std).reshape(n_test, self.output_dim)       
         var_y = var_y_std * (self.standardization_scale ** 2)
         std_y = np.sqrt(var_y)
         
         return mean_y, std_y
+
+    # def predict(self, X_new, ranges, return_std=False, debug=True):
+    #     """
+    #     Makes predictions using the fitted PCGP model with GPflow comparison at each component.
+    #     """
+    #     X_new_std = self.standardize_inputs(X_new, ranges)
+    #     X_new_tf = tf.convert_to_tensor(X_new_std, dtype=tf.float64)
+    #     X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
+        
+    #     n_train = self.X_train_std.shape[0]
+    #     n_test = X_new_std.shape[0]
+        
+    #     mu_g = np.zeros((n_test, self.n_components))
+ 
+    #     if return_std:
+    #         cov_g = np.zeros((n_test * self.n_components, n_test * self.n_components))
+        
+    #     for k in range(self.n_components):
+    #         w_k = tf.constant(self.weights[:, k:k+1], dtype=tf.float64)
+            
+    #         K_k = self._build_kernel_matrix(X_train_tf, component_idx=k)
+    #         k_star = self._build_kernel_matrix(X_new_tf, X_train_tf, component_idx=k)
+    #         k_star_star = self._build_kernel_matrix(X_new_tf, component_idx=k)
+            
+    #         Sigma_k = K_k + self.noise_var * tf.eye(n_train, dtype=tf.float64)
+    #         L_k = tf.linalg.cholesky(Sigma_k)
+            
+    #         alpha_k = tf.linalg.cholesky_solve(L_k, w_k)
+    #         mu_k = tf.matmul(k_star, alpha_k)
+    #         mu_g[:, k] = tf.squeeze(mu_k).numpy()
+            
+    #         if return_std:
+    #             v_k = tf.linalg.cholesky_solve(L_k, tf.transpose(k_star))  
+    #             Cov_k = k_star_star - tf.matmul(k_star, v_k)
+  
+    #             start_idx = k * n_test
+    #             end_idx = (k + 1) * n_test
+    #             cov_g[start_idx:end_idx, start_idx:end_idx] = Cov_k.numpy()
+        
+    #     phi_tf = tf.convert_to_tensor(self.phi_basis, dtype=tf.float64)
+    #     mu_y_std = tf.matmul(mu_g, phi_tf, transpose_b=True)
+    #     mean_y = self._unstandardize_output(mu_y_std.numpy())
+        
+    #     if not return_std:
+    #         return mean_y
+        
+    #     phi_together = np.zeros((n_test * self.output_dim, n_test * self.n_components))
+        
+    #     for i in range(n_test):
+    #         for j in range(self.n_components):
+    #             row_start = i * self.output_dim
+    #             row_end = (i + 1) * self.output_dim
+    #             col_idx = i * self.n_components + j
+                
+    #             phi_together[row_start:row_end, col_idx] = self.phi_basis[:, j]
+   
+    #     temp = np.dot(phi_together, cov_g)
+    #     cov_y_std = np.dot(temp, phi_together.T)
+    #     cov_y_std += self.noise_var * np.eye(n_test * self.output_dim)
+
+    #     var_y_std = np.diag(cov_y_std).reshape(n_test, self.output_dim)       
+    #     var_y = var_y_std * (self.standardization_scale ** 2)
+    #     std_y = np.sqrt(var_y)
+        
+    #     return mean_y, std_y
