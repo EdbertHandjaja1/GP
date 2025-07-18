@@ -63,16 +63,16 @@ def plot_pcgp_training_predictions(output_dim_to_plot=0):
              markersize=6, label='Predicted mean')
     plt.plot(x_sorted, true_func_values, 'r-', linewidth=3, 
              label='True function')
-    # plt.fill_between(x_sorted,
-    #          (y_pred_sorted - 2 * y_std_sorted),
-    #          (y_pred_sorted + 2 * y_std_sorted),
-    #          alpha=0.2, color='blue', label='95% Confidence Interval')
-
-    noise_level = np.sqrt(pcgp.noise_var) * pcgp.standardization_scale
     plt.fill_between(x_sorted,
-                    true_func_values - 2*noise_level,
-                    true_func_values + 2*noise_level,
-                    alpha=0.1, color='blue', label='True noise level')
+             (y_pred_sorted - 2 * y_std_sorted),
+             (y_pred_sorted + 2 * y_std_sorted),
+             alpha=0.2, color='blue', label='95% Confidence Interval')
+
+    # noise_level = np.sqrt(pcgp.noise_var) * pcgp.standardization_scale
+    # plt.fill_between(x_sorted,
+    #                 true_func_values - 2*noise_level,
+    #                 true_func_values + 2*noise_level,
+    #                 alpha=0.1, color='blue', label='True noise level')
 
     plt.xlabel('Input Dimension 1')
     plt.ylabel(f'Output Dimension {output_dim_to_plot + 1}')

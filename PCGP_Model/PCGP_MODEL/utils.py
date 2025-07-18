@@ -1,6 +1,6 @@
 import numpy as np
 
-def generate_test_data(n_train=50, n_test=20, input_dim=3, output_dim=5, 
+def generate_test_data(n_train=50, n_test=200, input_dim=3, output_dim=5, 
                      function_type='default', noise_level=0.05, random_seed=42):
     """
     Generate test data with different function types.

@@ -40,8 +40,11 @@ def plot_pcgp_testing_predictions(output_dim_to_plot=0):
     plt.figure(figsize=(12, 7))
     
     sort_idx = np.argsort(X_test[:, 0])
+    sort_idx_train = np.argsort(X_train[:,0])
     x_sorted = X_test[sort_idx, 0]
+    x_train_sorted = X_train[sort_idx_train, 0]
     y_true_sorted = Y_test[sort_idx, output_dim_to_plot]
+    y_true_train_sorted = Y_train[sort_idx_train, output_dim_to_plot]
     y_pred_sorted = Y_pred_mean[sort_idx, output_dim_to_plot]
     y_std_sorted = Y_pred_std[sort_idx, output_dim_to_plot]
 
@@ -54,17 +57,18 @@ def plot_pcgp_testing_predictions(output_dim_to_plot=0):
                 y_pred_sorted - 2*y_std_sorted,
                 y_pred_sorted + 2*y_std_sorted], 3)[:8])
 
-    plt.scatter(x_sorted, y_true_sorted, c='black', marker='x', 
-                s=100, label='True Test Values')
-    
+    # plt.scatter(x_sorted, y_true_sorted, c='black', marker='x', 
+    #             s=100, label='True Test Values')
+    plt.scatter(x_train_sorted, y_true_train_sorted, c='black', marker='x', 
+                s=100, label='Train Values')
     plt.plot(x_sorted, y_pred_sorted, 'bo-', linewidth=2, 
              markersize=6, label='Predicted mean')
     plt.plot(x_sorted, true_func_values, 'r-', linewidth=3, 
              label='True function')
     noise_level = np.sqrt(pcgp.noise_var) * pcgp.standardization_scale
     plt.fill_between(x_sorted,
-                    true_func_values - 2*noise_level,
-                    true_func_values + 2*noise_level,
+                    y_pred_sorted - 2*y_std_sorted,
+                    y_pred_sorted + 2*y_std_sorted,
                     alpha=0.1, color='blue', label='True noise level')
 
     plt.xlabel('Input Dimension 1')

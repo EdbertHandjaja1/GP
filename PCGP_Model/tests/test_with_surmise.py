@@ -16,7 +16,7 @@ def plot_surmise_testing_predictions(output_dim_to_plot=0):
     X_train, Y_train, X_test, Y_test, ranges, true_func = generate_test_data(
         input_dim=input_dim,
         output_dim=output_dim,
-        function_type='multiplicative'
+        function_type='default'
     )
 
     x_emu_predict = np.array([[0]])
@@ -33,6 +33,8 @@ def plot_surmise_testing_predictions(output_dim_to_plot=0):
     emu.fit()
 
     pred = emu.predict(x=x_emu_predict, theta=X_test)     
+
+    print(emu)
 
     Y_pred_mean = pred.mean().flatten()           
     Y_pred_std  = np.sqrt(pred.var()).flatten()
@@ -85,7 +87,7 @@ def plot_surmise_training_predictions(output_dim_to_plot=0):
     X_train, Y_train, _, _, _, true_func = generate_test_data(
         input_dim=input_dim,
         output_dim=output_dim,
-        function_type='multiplicative'
+        function_type='default'
     )
 
     theta_emu_train = X_train 
@@ -151,6 +153,6 @@ def plot_surmise_training_predictions(output_dim_to_plot=0):
     plt.show()
 
 if __name__ == "__main__":
-    plot_surmise_testing_predictions(output_dim_to_plot=0)
-    # plot_surmise_training_predictions(output_dim_to_plot=0)
+    # plot_surmise_testing_predictions(output_dim_to_plot=0)
+    plot_surmise_training_predictions(output_dim_to_plot=0)
 
