@@ -6,7 +6,24 @@ import matplotlib.pyplot as plt
 from PCGP_MODEL.kernels import GaussianKernel
 
 class PrincipalComponentGaussianProcessModel:
+    """
+    A class to implement a Principal Component Gaussian Process (PCGP) model.
+    This model combines Principal Component Analysis (PCA) with Gaussian Processes (GPs)
+    to model high-dimensional outputs. PCA is used to reduce the dimensionality of the
+    output space, and then individual GPs are trained on the principal component weights.
+    """
     def __init__(self, n_components=9, input_dim=12, output_dim=28):
+        """
+        Sets up the initial parameters of the PCGP model,
+
+        Arguments:
+            n_components (int): The number of principal components to retain. 
+            input_dim (int): The dimensionality of the input data (X). 
+            output_dim (int): The dimensionality of the output data (Y). 
+
+        Output:
+            None. 
+        """
         self.n_components = n_components
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -21,9 +38,20 @@ class PrincipalComponentGaussianProcessModel:
         self.rho = np.ones((n_components, input_dim)) * 0.1
         self.lambda_w = np.ones(n_components) * 1.0
         self.noise_var = 1e-3
-        # maybe store alpha
 
     def standardize_inputs(self, X, ranges):
+        """
+        Standardizes input data X to the range [0, 1] based on provided min/max ranges.
+
+        Arguments:
+            X (np.ndarray): The input data to be standardized. Shape (n_samples, input_dim).
+            ranges (np.ndarray): A 2D array specifying the min and max for each input
+                                 dimension. Shape (input_dim, 2), where ranges[i, 0] is
+                                 the minimum and ranges[i, 1] is the maximum for the i-th dimension.
+
+        Output:
+            np.ndarray: The standardized input data. Shape (n_samples, input_dim).
+        """
         X = np.asarray(X, dtype=np.float64)
         ranges = np.asarray(ranges, dtype=np.float64)
         mins = ranges[:, 0]
@@ -34,17 +62,49 @@ class PrincipalComponentGaussianProcessModel:
         return np.clip(X_standardized, 0.0, 1.0)
 
     def _standardize_output(self, Y):
+        """
+        Standardizes the output data Y by centering and scaling.
+
+        Arguments:
+            Y (np.ndarray): The output data to be standardized. Shape (n_samples, output_dim).
+
+        Output:
+            np.ndarray: The standardized output data. Shape (n_samples, output_dim).
+        """
+
         self.standardization_mean = np.mean(Y, axis=0)
         Y_centered = Y - self.standardization_mean
         self.standardization_scale = np.sqrt(np.mean(Y_centered ** 2, axis=0))
-        # if self.standardization_scale == 0:
-        #     self.standardization_scale = 1.0
         return Y_centered / self.standardization_scale
 
     def _unstandardize_output(self, Y_standardized):
+        """
+        Unstandardizes the output data Y_standardized using the previously stored mean and scale.
+
+        Arguments:
+            Y_standardized (np.ndarray): The standardized output data to be unstandardized.
+                                         Shape (n_samples, output_dim).
+
+        Output:
+            np.ndarray: The unstandardized output data. Shape (n_samples, output_dim).
+        """
         return Y_standardized * self.standardization_scale + self.standardization_mean
 
     def compute_principal_components(self, Y_standardized):
+        """
+        Computes the principal component weights and basis vectors from standardized output data.
+
+        Arguments:
+            Y_standardized (tf.Tensor or np.ndarray): The standardized training output data.
+                                                      Shape (n_samples, output_dim).
+
+        Output:
+            tuple: containing:
+                - weights (np.ndarray): The principal component weights.
+                                        Shape (n_samples, n_components).
+                - phi_basis (np.ndarray): The principal component basis vectors.
+                                          Shape (output_dim, n_components).
+        """
         y_tensor = tf.convert_to_tensor(Y_standardized, dtype=tf.float64)
         
         n = tf.cast(tf.shape(y_tensor)[0], dtype=tf.float64) 
@@ -62,6 +122,22 @@ class PrincipalComponentGaussianProcessModel:
         return weights.numpy(), phi_basis.numpy()
 
     def _build_kernel_matrix(self, X1, X2=None, component_idx=None):
+        """
+        Builds a Gaussian Kernel covariance matrix for given input data.
+
+        Arguments:
+            X1 (tf.Tensor or np.ndarray): The first set of input points. Shape (n1, input_dim).
+            X2 (tf.Tensor or np.ndarray, optional): The second set of input points. Shape (n2, input_dim).
+            component_idx (int, optional): Builds the kernel matrix only for this
+                                           particular principal component (0-indexed).
+                                           If None, a block-diagonal matrix for all components is built.
+
+        Output:
+            tf.Tensor: The kernel (covariance) matrix.
+                       - If `component_idx` is specified: Shape (n1, n2).
+                       - If `component_idx` is None: Shape (n1 * n_components, n2 * n_components)
+                                                     (block-diagonal).
+        """
         if X2 is None:
             X2 = X1
 
@@ -126,7 +202,16 @@ class PrincipalComponentGaussianProcessModel:
 
     def fit(self, X_train, Y_train, ranges):
         """
-        Fits the PCGP model to training data
+        Fits the PCGP model to training data by optimizing hyperparameters.
+
+        Arguments:
+            X_train (np.ndarray): The training input data. Shape (n_train_samples, input_dim).
+            Y_train (np.ndarray): The training output data. Shape (n_train_samples, output_dim).
+            ranges (np.ndarray): The min/max ranges for standardizing input data.
+                                 Shape (input_dim, 2).
+
+        Output:
+            self: The fitted PrincipalComponentGaussianProcessModel model.
         """
         self.X_train = X_train
         self.Y_train = Y_train
@@ -137,6 +222,9 @@ class PrincipalComponentGaussianProcessModel:
         iteration_count = [0]
         
         def objective(params):
+            """
+            Objective function for scipy.optimize.minimize.
+            """
             iteration_count[0] += 1
             
             rho_flattened = np.exp(params[:self.n_components * self.input_dim])
@@ -145,7 +233,6 @@ class PrincipalComponentGaussianProcessModel:
             
             nll = self._negative_log_marginal_likelihood(rho_flattened, lambda_w, noise_var)
             
-            # debug
             if iteration_count[0] % 10 == 0:
                 print(f"Iteration {iteration_count[0]}: NLL = {nll:.6f}, noise_var = {noise_var:.6f}")
                 print(f"  Sample rho: {rho_flattened[:3]}")
@@ -197,6 +284,23 @@ class PrincipalComponentGaussianProcessModel:
 
 
     def predict(self, X_new, ranges, return_std=False, debug=True):
+        """
+        Makes predictions using the fitted PCGP model.
+
+        Arguments:
+            X_new (np.ndarray): The new input data for which to make predictions.
+                                Shape (n_test_samples, input_dim).
+            ranges (np.ndarray): The min/max ranges used for standardizing input data.
+                                 Shape (input_dim, 2).
+            return_std (bool, optional): If True, also returns the standard deviation of the
+                                         predictions. Defaults to False.
+            debug (bool, optional): A placeholder for potential debug outputs.
+
+        Output:
+            np.ndarray: The mean predictions for the new input data. Shape (n_test_samples, output_dim).
+            (np.ndarray, optional): If `return_std` is True, also returns the standard deviation
+                                    of the predictions. Shape (n_test_samples, output_dim).
+        """
         X_new_std = self.standardize_inputs(X_new, ranges)
         X_new_tf = tf.convert_to_tensor(X_new_std, dtype=tf.float64)
         X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
