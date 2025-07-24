@@ -6,10 +6,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PCGP_MODEL import PrincipalComponentGaussianProcessModel
 from testfunc_wrapper import TestFuncCaller
 from surmise.emulation import emulator
-from pyDOE import lhs
-import scipy.stats as sps
-import pandas as pd
 import pathlib
+from helper import run_pcgp, run_surmise
 
 outputdir = r'experiments/output/'
 pathlib.Path(outputdir).mkdir(exist_ok=True)
@@ -22,53 +20,6 @@ ntest = 150
 def calculate_rmse(ytrue, ypred):
     rmse = np.sqrt(np.mean((ytrue - ypred) ** 2))
     return rmse
-
-def run_pcgp_model(data, output_dim, n_components=None):
-    X_train, X_test, Y_train = data['xtrain'], data['xtest'], data['ytrain']
-    
-    if n_components is None:
-        n_components = min(output_dim, 10)
-    
-    pcgp = PrincipalComponentGaussianProcessModel(
-        n_components=n_components,
-        input_dim=X_train.shape[1],
-        output_dim=output_dim
-    )
-    
-    ranges = np.column_stack([np.zeros(X_train.shape[1]), np.ones(X_train.shape[1])])
-    
-    fitted_model = pcgp.fit(
-        X_train, 
-        Y_train[:, output_dim].reshape(-1, 1), 
-        ranges
-    )
-    
-    pred_mean, _ = fitted_model.predict(X_test, ranges, return_std=True)
-    
-    return pred_mean.T
-
-def run_surmise_pcgp_model(data, output_dim):
-    X_train, X_test, Y_train = data['xtrain'], data['xtest'], data['ytrain']
-    
-    theta_emu_train = X_train
-
-    x_emu_train = np.array([[0]])
-    
-    f_emu_train = Y_train[:, output_dim].reshape(1, -1) 
-    
-    emu = emulator(
-        x=x_emu_train,       
-        theta=theta_emu_train, 
-        f=f_emu_train,    
-        method='PCGP',
-        options={'epsilon': 0}
-    )
-    emu.fit()
-    
-    pred = emu.predict(x=x_emu_train, theta=X_test)
-    pred_mean = pred.mean().T  
-    
-    return pred_mean
 
 def main():
     np.random.seed(42)
@@ -96,18 +47,36 @@ def main():
                 # start timer
 
                 # run pcgp
-                pcgp = PrincipalComponentGaussianProcessModel(
-                    n_components = 1,
+                Y_pred_mean, Y_pred_std = run_pcgp(
+                    n_components=1,
                     input_dim=meta['xdim'],
-                    output_dim=1
+                    output_dim=output,
+                    X_train=X_train,
+                    Y_train=Y_train,
+                    X_test=X_test
                 )
 
-                ranges = np.column_stack([np.zeros(meta['xdim']), np.ones(meta['xdim'])])
+                # stop timer
+                # calculate rmse
 
-                fitted
+                # run surmise
+                Y_pred_mean, Y_pred_std, emu = run_surmise(
+                    n_components=1,
+                    input_dim=meta['xdim'],
+                    output_dim=output,
+                    X_train=X_train,
+                    Y_train=Y_train,
+                    X_test=X_test
+                )
+
+                # stop timer
+                # calculate rmse
 
                 pass
+
+            # Store results
         
+        # SAVE results to output 
     
 
 if __name__ == "__main__":
