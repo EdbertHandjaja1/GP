@@ -26,7 +26,7 @@ def evaluate_model_performance(ytrue, ypred):
     return rmse
 
 def run_pcgp_model(data, output_dim, n_components=None):
-    """Run PCGP model"""
+    """Run PCGP model - same as before"""
     xtrain, xtest, ytrain = data['xtrain'], data['xtest'], data['ytrain']
     
     if n_components is None:
@@ -47,24 +47,26 @@ def run_pcgp_model(data, output_dim, n_components=None):
     return pred_mean.T
 
 def run_surmise_pcgp_model(data, output_dim):
-    """Run Surmise PCGP model for comparison"""
+    """Run Surmise PCGP model - CORRECTED to match illustration approach"""
     xtrain, xtest, ytrain = data['xtrain'], data['xtest'], data['ytrain']
     
     theta_emu_train = xtrain
-    x_emu_train = np.array([[0]])  
-    f_emu_train = ytrain.T  
+
+    x_emu_train = np.arange(output_dim).reshape(-1, 1)  
+    
+    f_emu_train = ytrain  
     
     emu = emulator(
-        x=x_emu_train,
-        theta=theta_emu_train,
-        f=f_emu_train,
+        x=x_emu_train,       
+        theta=theta_emu_train, 
+        f=f_emu_train,    
         method='PCGP',
         options={'epsilon': 0}
     )
     emu.fit()
     
     pred = emu.predict(x=x_emu_train, theta=xtest)
-    pred_mean = pred.mean().T
+    pred_mean = pred.mean().T  
     
     return pred_mean
 
@@ -73,37 +75,41 @@ def main():
     np.random.seed(42)
     
     for function in funcs:
+        print(f"Processing function: {function}")
         
         func_caller = TestFuncCaller(function)
         func_meta = func_caller.info
-        xdim = func_meta['thetadim']
-        locationdim = func_meta['xdim']
+        xdim = func_meta['thetadim']  
+        locationdim = func_meta['xdim']  
         
         xtest = lhs(xdim, ntest)
         
         for output_dim in output_dims:
+            print(f"  Output dimension: {output_dim}")
+            
             locations = sps.uniform.rvs(0, 1, (output_dim, locationdim))
+            
             ytrue_test = func_meta['nofailmodel'](locations, xtest)
             
             generating_noises_var = 0.05 ** ((np.arange(output_dim) + 1) / 2) * np.var(ytrue_test, 1)
             
             for ntrain in ns:
-                for rep in range(rep_n):                    
+                print(f"    Training size: {ntrain}")
+                
+                for rep in range(rep_n):
+                    print(f"      Repetition: {rep + 1}/{rep_n}")
+                    
                     xtrain = lhs(xdim, ntrain)
                     ytrain_clean = func_meta['nofailmodel'](locations, xtrain)
                     ytest_clean = func_meta['nofailmodel'](locations, xtest)
                     
                     ytrain = ytrain_clean + np.random.normal(
-                        np.zeros_like(generating_noises_var),
-                        generating_noises_var,
-                        (ntrain, output_dim)
-                    ).T
+                        0, np.sqrt(generating_noises_var)[:, np.newaxis], ytrain_clean.shape
+                    )
                     
                     ytest = ytest_clean + np.random.normal(
-                        np.zeros_like(generating_noises_var),
-                        generating_noises_var,
-                        (ntest, output_dim)
-                    ).T
+                        0, np.sqrt(generating_noises_var)[:, np.newaxis], ytest_clean.shape
+                    )
                     
                     data = {
                         'xtrain': xtrain,
@@ -137,6 +143,8 @@ def main():
                                 'rmse': rmse
                             }
                             
+                            print(f"        {model_name}: RMSE = {rmse:.4f}, Time = {train_time:.3f}s")
+                            
                             df = pd.DataFrame.from_dict(result, orient='index').reset_index()
                             df.columns = ['metric', 'value']
                             output_file = os.path.join(
@@ -146,7 +154,7 @@ def main():
                             df.to_csv(output_file, index=False)
                             
                         except Exception as e:
-                            print(f"      {model_name}: Failed - {str(e)}")
+                            print(f"        {model_name}: Failed - {str(e)}")
                             continue
 
 def analyze_results():
@@ -154,15 +162,23 @@ def analyze_results():
     results_files = [f for f in os.listdir(outputdir) if f.endswith('.csv')]
     
     if not results_files:
+        print("No result files found!")
         return
     
     all_results = []
     
     for file in results_files:
+        if file == 'benchmark_summary.csv':
+            continue
+            
         df = pd.read_csv(os.path.join(outputdir, file))
             
         parts = file.replace('.csv', '').split('_')
+        if len(parts) < 2:
+            continue
         model_name = parts[0]
+        if len(parts) > 1 and parts[1] == 'PCGP':
+            model_name = 'Surmise_PCGP'
             
         result_dict = {'model': model_name}
         for _, row in df.iterrows():
@@ -175,12 +191,15 @@ def analyze_results():
         
         summary_file = os.path.join(outputdir, 'benchmark_summary.csv')
         results_df.to_csv(summary_file, index=False)
+        print(f"Results saved to {summary_file}")
         
         summary_stats = results_df.groupby(['model', 'function', 'output_dim', 'n']).agg({
             'rmse': ['mean', 'std'],
             'traintime': ['mean', 'std']
         }).round(4)
         
+        print("\nSummary Statistics:")
+        print(summary_stats)
 
 if __name__ == "__main__":
     main()
