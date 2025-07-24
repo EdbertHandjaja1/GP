@@ -71,10 +71,6 @@ def main():
     np.random.seed(42)
     
     for function in funcs:
-        print(f"\n{'='*60}")
-        print(f"Processing function: {function}")
-        print(f"{'='*60}")
-        
         func_caller = TestFuncCaller(function)
         func_meta = func_caller.info
         xdim = func_meta['thetadim']
@@ -83,7 +79,6 @@ def main():
         xtest = lhs(xdim, ntest)
         
         for output_dim in output_dims:
-            print(f"\nOutput dimension: {output_dim}")
             
             locations = sps.uniform.rvs(0, 1, (output_dim, locationdim))
             ytrue_test = func_meta['nofailmodel'](locations, xtest)
@@ -91,14 +86,10 @@ def main():
             generating_noises_var = 0.05 ** ((np.arange(output_dim) + 1) / 2) * np.var(ytrue_test, 1)
             
             for ntrain in ns:
-                print(f"  Training size: {ntrain}")
                 
                 for rep in range(rep_n):
-                    print(f"    Repetition: {rep + 1}/{rep_n}")
                     
-                    pass
-
-                    # FIXXXXXXX
+                    #FIXXX FOR DATA
    
                     data = {
                         'xtrain': xtrain,
@@ -113,38 +104,31 @@ def main():
                     ]
                     
                     for model_name, model_func in models_to_test:
-                        try:
-                            train_start = time.time()
-                            pred_mean = model_func(data, output_dim)
-                            train_time = time.time() - train_start
-                          
-                            rmse = evaluate_model_performance(ytrue_test.T, pred_mean)
+                        train_start = time.time()
+                        pred_mean = model_func(data, output_dim)
+                        train_time = time.time() - train_start
+                      
+                        rmse = evaluate_model_performance(ytrue_test.T, pred_mean)
            
-                            result = {
-                                'modelname': model_name,
-                                'runno': f'n{ntrain}_rep{rep}',
-                                'function': function,
-                                'modelrun': f'n{ntrain}_rep{rep}_{function}_{output_dim}',
-                                'n': ntrain,
-                                'output_dim': output_dim,
-                                'rep': rep,
-                                'traintime': train_time,
-                                'rmse': rmse
-                            }
+                        result = {
+                            'modelname': model_name,
+                            'runno': f'n{ntrain}_rep{rep}',
+                            'function': function,
+                            'modelrun': f'n{ntrain}_rep{rep}_{function}_{output_dim}',
+                            'n': ntrain,
+                            'output_dim': output_dim,
+                            'rep': rep,
+                            'traintime': train_time,
+                            'rmse': rmse
+                        }
                  
-                            df = pd.DataFrame.from_dict(result, orient='index').reset_index()
-                            df.columns = ['metric', 'value']
-                            output_file = os.path.join(
-                                outputdir, 
-                                f'{model_name}_{result["modelrun"]}.csv'
-                            )
-                            df.to_csv(output_file, index=False)
-                            
-                            print(f"      {model_name}: RMSE={rmse:.4f}, Time={train_time:.2f}s")
-                            
-                        except Exception as e:
-                            print(f"      {model_name}: Failed - {str(e)}")
-                            continue
+                        df = pd.DataFrame.from_dict(result, orient='index').reset_index()
+                        df.columns = ['metric', 'value']
+                        output_file = os.path.join(
+                            outputdir, 
+                            f'{model_name}_{result["modelrun"]}.csv'
+                        )
+                        df.to_csv(output_file, index=False)
 
 def analyze_results():
     """Analyze and summarize benchmark results"""
