@@ -1,267 +1,188 @@
 import numpy as np
-import matplotlib.pyplot as plt
+import time
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PCGP_MODEL import PrincipalComponentGaussianProcessModel
 from testfunc_wrapper import TestFuncCaller
 from surmise.emulation import emulator
+from pyDOE import lhs
+import scipy.stats as sps
+import pandas as pd
+import pathlib
 
-def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim=0):
-    # test_functions = ['borehole', 'otlcircuit', 'piston', 'wingweight']
-    test_functions = ['borehole', 'otlcircuit', 'piston']
-    models = ['pcgp', 'surmise']
+outputdir = r'experiments/output/'
+pathlib.Path(outputdir).mkdir(exist_ok=True)
+
+rep_n = 1
+output_dims = [1, 4, 8, 16]  
+ns = [50, 100, 150, 200]
+# funcs = ['borehole', 'otlcircuit', 'piston', 'wingweight']  
+funcs = ['borehole']  
+ntest = 150
+
+def evaluate_model_performance(ytrue, ypred):
+    """Calculate RMSE"""
+    rmse = np.sqrt(np.mean((ytrue - ypred) ** 2))
+    return rmse
+
+def run_pcgp_model(data, output_dim, n_components=None):
+    """Run PCGP model"""
+    xtrain, xtest, ytrain = data['xtrain'], data['xtest'], data['ytrain']
     
-    for function_name in test_functions:
-        func_caller = TestFuncCaller(function_name)
-        meta = func_caller.info
-        
-        # generate training data once for both models
-        theta_train = np.random.uniform(0, 1, (n_train, meta['thetadim'])) 
-        X_train = np.random.uniform(0, 1, (n_train, meta['xdim']))
+    pcgp = PrincipalComponentGaussianProcessModel(
+        n_components=n_components,
+        input_dim=xtrain.shape[1],
+        output_dim=output_dim
+    )
+    
+    ranges = np.column_stack([np.zeros(xtrain.shape[1]), np.ones(xtrain.shape[1])])
+    
+    fitted_model = pcgp.fit(xtrain, ytrain.T, ranges)
+    
+    pred_mean, _ = fitted_model.predict(xtest, ranges, return_std=True)
+    
+    return pred_mean.T
 
-        Y_train = func_caller.info['nofailmodel'](X_train, theta_train)
-        Y_true_train = func_caller.info['true_func'](X_train)
-        
-        # Y_train += noise_level * np.std(Y_train) * np.random.randn(*Y_train.shape)
-        Y_train += noise_level * np.std(Y_train) 
+def run_surmise_pcgp_model(data, output_dim):
+    """Run Surmise PCGP model for comparison"""
+    xtrain, xtest, ytrain = data['xtrain'], data['xtest'], data['ytrain']
+    
+    theta_emu_train = xtrain
+    x_emu_train = np.array([[0]])  
+    f_emu_train = ytrain.T 
+    
+    emu = emulator(
+        x=x_emu_train,
+        theta=theta_emu_train,
+        f=f_emu_train,
+        method='PCGP',
+        options={'epsilon': 0}
+    )
+    emu.fit()
+    
+    pred = emu.predict(x=x_emu_train, theta=xtest)
+    pred_mean = pred.mean().T  
+    
+    return pred_mean
 
-        X_test = np.random.uniform(0, 1, (n_test, meta['xdim']))
-        theta_test = np.random.uniform(0, 1, (n_test, meta['thetadim']))
-
-        Y_test_true = func_caller.info['nofailmodel'](X_test, theta_test)
-        Y_true_test = func_caller.info['true_func'](X_test)
-
-        plt.figure(figsize=(15, 8))
+def main():
+    """Main benchmarking function"""
+    np.random.seed(42)
+    
+    for function in funcs:
+        print(f"\n{'='*60}")
+        print(f"Processing function: {function}")
+        print(f"{'='*60}")
         
-        sort_idx_train = np.argsort(X_train[:, 0])
-        sort_idx_test = np.argsort(X_test[:, 0])
+        func_caller = TestFuncCaller(function)
+        func_meta = func_caller.info
+        xdim = func_meta['thetadim']
+        locationdim = func_meta['xdim']
         
-        # plot training
-        plt.scatter(X_train[sort_idx_train, 0], Y_train[sort_idx_train, output_dim], 
-                   c='black', marker='x', s=100, label='Noisy Training Values', alpha=0.7)
-        plt.plot(X_train[sort_idx_train, 0], Y_true_train[sort_idx_train, output_dim], 'r-', 
-                linewidth=3, label='True function (train)')
+        xtest = lhs(xdim, ntest)
         
-        results = {}
-        
-        for model in models:
-            if model == 'pcgp':
-                pcgp = PrincipalComponentGaussianProcessModel(
-                    n_components=1,
-                    input_dim=meta['xdim'],
-                    output_dim=1
-                )
-                
-                ranges = np.column_stack([np.zeros(meta['xdim']), np.ones(meta['xdim'])])
-                fitted_model = pcgp.fit(
-                    X_train, 
-                    Y_train[:, output_dim].reshape(-1, 1), 
-                    ranges
-                )
-                
-                Y_pred_mean, Y_pred_std = fitted_model.predict(X_test, ranges, return_std=True)
-                test_rmse = np.sqrt(np.mean((Y_pred_mean.flatten() - Y_test_true[:, output_dim]) ** 2))
-                
-                plt.plot(X_test[sort_idx_test, 0], Y_pred_mean[sort_idx_test, 0], 'b-', 
-                        linewidth=3, label='PCGP Predicted mean')
-                plt.fill_between(X_test[sort_idx_test, 0],
-                                (Y_pred_mean[sort_idx_test, 0] - 2 * Y_pred_std[sort_idx_test, 0]),
-                                (Y_pred_mean[sort_idx_test, 0] + 2 * Y_pred_std[sort_idx_test, 0]),
-                                alpha=0.2, color='blue', label='PCGP 95% CI')
-                
-                results['pcgp'] = test_rmse
-                
-                print("\n" + "="*50)
-                print(f"PCGP: {meta['function']} Function Results".center(50))
-                print("="*50)
-                print(f"{'Test RMSE:':<20}{test_rmse:.4f}")
-                print("="*50)
+        for output_dim in output_dims:
+            print(f"\nOutput dimension: {output_dim}")
             
-            else:  
-                theta_emu_train = X_train 
-                x_emu_train = np.array([[0]])
-                f_emu_train = Y_train[:, output_dim].reshape(1, -1) 
+            locations = sps.uniform.rvs(0, 1, (output_dim, locationdim))
+            ytrue_test = func_meta['nofailmodel'](locations, xtest)
+            
+            generating_noises_var = 0.05 ** ((np.arange(output_dim) + 1) / 2) * np.var(ytrue_test, 1)
+            
+            for ntrain in ns:
+                print(f"  Training size: {ntrain}")
                 
-                emu = emulator(
-                    x=x_emu_train, 
-                    theta=theta_emu_train, 
-                    f=f_emu_train, 
-                    method='PCGP',
-                    options={'epsilon': 0})
-                emu.fit()
-                
-                pred = emu.predict(x=x_emu_train, theta=X_test)
-                Y_pred_mean = pred.mean().flatten()
-                Y_pred_std = np.sqrt(pred.var()).flatten()
-                test_rmse = np.sqrt(np.mean((Y_pred_mean - Y_test_true[:, output_dim]) ** 2))
-                
-                plt.plot(X_test[sort_idx_test, 0], Y_pred_mean[sort_idx_test], 'g--', 
-                        linewidth=3, label='Surmise Predicted mean')
-                plt.fill_between(X_test[sort_idx_test, 0],
-                                (Y_pred_mean[sort_idx_test] - 2 * Y_pred_std[sort_idx_test]),
-                                (Y_pred_mean[sort_idx_test] + 2 * Y_pred_std[sort_idx_test]),
-                                alpha=0.15, color='green', label='Surmise 95% CI')
-                
-                results['surmise'] = test_rmse
-                
-                print("\n" + "="*50)
-                print(f"Surmise PCGP: {meta['function']} Function Results".center(50))
-                print("="*50)
-                print(f"{'Training RMSE:':<20}{test_rmse:.4f}")
-                print(emu)  
-                print("="*50)
+                for rep in range(rep_n):
+                    print(f"    Repetition: {rep + 1}/{rep_n}")
+                    
+                    pass
+
+                    # FIXXXXXXX
+   
+                    data = {
+                        'xtrain': xtrain,
+                        'xtest': xtest,
+                        'ytrain': ytrain,
+                        'ytrue': ytrue_test
+                    }
+ 
+                    models_to_test = [
+                        ('PCGP', run_pcgp_model),
+                        ('Surmise_PCGP', run_surmise_pcgp_model)
+                    ]
+                    
+                    for model_name, model_func in models_to_test:
+                        try:
+                            train_start = time.time()
+                            pred_mean = model_func(data, output_dim)
+                            train_time = time.time() - train_start
+                          
+                            rmse = evaluate_model_performance(ytrue_test.T, pred_mean)
+           
+                            result = {
+                                'modelname': model_name,
+                                'runno': f'n{ntrain}_rep{rep}',
+                                'function': function,
+                                'modelrun': f'n{ntrain}_rep{rep}_{function}_{output_dim}',
+                                'n': ntrain,
+                                'output_dim': output_dim,
+                                'rep': rep,
+                                'traintime': train_time,
+                                'rmse': rmse
+                            }
+                 
+                            df = pd.DataFrame.from_dict(result, orient='index').reset_index()
+                            df.columns = ['metric', 'value']
+                            output_file = os.path.join(
+                                outputdir, 
+                                f'{model_name}_{result["modelrun"]}.csv'
+                            )
+                            df.to_csv(output_file, index=False)
+                            
+                            print(f"      {model_name}: RMSE={rmse:.4f}, Time={train_time:.2f}s")
+                            
+                        except Exception as e:
+                            print(f"      {model_name}: Failed - {str(e)}")
+                            continue
+
+def analyze_results():
+    """Analyze and summarize benchmark results"""
+    results_files = [f for f in os.listdir(outputdir) if f.endswith('.csv')]
+    
+    if not results_files:
+        print("No results found!")
+        return
+    
+    all_results = []
+    
+    for file in results_files:
+        try:
+            df = pd.read_csv(os.path.join(outputdir, file))
         
-        plt.xlabel('First Input Dimension')
-        plt.ylabel(f'Output (Dimension {output_dim + 1})')
-        plt.title(f'PCGP vs Surmise Comparison for {meta["function"]} Function')
-        plt.legend()
-        plt.grid(True, linestyle='--', alpha=0.6)
-        plt.tight_layout()
+            parts = file.replace('.csv', '').split('_')
+            model_name = parts[0]
+  
+            result_dict = {'model': model_name}
+            for _, row in df.iterrows():
+                result_dict[row['metric']] = row['value']
+            
+            all_results.append(result_dict)
+        except Exception as e:
+            print(f"Error reading {file}: {e}")
+            continue
+    
+    if all_results:
+        results_df = pd.DataFrame(all_results)
+
+        summary_file = os.path.join(outputdir, 'benchmark_summary.csv')
+        results_df.to_csv(summary_file, index=False)
         
-        print("\n" + "="*60)
-        print(f"COMPARISON SUMMARY: {meta['function']} Function".center(60))
-        print("="*60)
-        print(f"{'PCGP RMSE:':<30}{results['pcgp']:.4f}")
-        print(f"{'Surmise RMSE:':<30}{results['surmise']:.4f}")
-        print(f"{'Difference:':<30}{abs(results['pcgp'] - results['surmise']):.4f}")
-        print("="*60 + "\n")
-        
-        plt.show()
+        summary_stats = results_df.groupby(['model', 'function', 'output_dim', 'n']).agg({
+            'rmse': ['mean', 'std'],
+            'traintime': ['mean', 'std']
+        }).round(4)
 
 if __name__ == "__main__":
-    np.random.seed(42)
-    run_experiments()
-
-
-# def run_pcgp_experiment(function_name='borehole', output_dim=0, n_samples=100, noise_level=0.05):
-#     """Run experiment using custom PCGP implementation"""
-#     func_caller = TestFuncCaller(function_name)
-#     meta = func_caller.info
-
-#     theta_train = np.random.uniform(0, 1, (n_samples, meta['thetadim'])) 
-#     X_train = np.random.uniform(0, 1, (n_samples, meta['xdim']))
-    
-#     Y_train = func_caller.info['nofailmodel'](X_train, theta_train)
-#     Y_true = func_caller.info['true_func'](X_train)
-    
-#     Y_train += noise_level * np.std(Y_train) 
-
-#     pcgp = PrincipalComponentGaussianProcessModel(
-#         n_components=1,
-#         input_dim=meta['xdim'],
-#         output_dim=1
-#     )
-    
-#     ranges = np.column_stack([np.zeros(meta['xdim']), np.ones(meta['xdim'])])
-    
-#     fitted_model = pcgp.fit(
-#         X_train, 
-#         Y_train[:, output_dim].reshape(-1, 1), 
-#         ranges
-#     )
-    
-#     Y_pred_mean, Y_pred_std = fitted_model.predict(X_train, ranges, return_std=True)
-#     train_rmse = np.sqrt(np.mean((Y_pred_mean - Y_train[:, output_dim].reshape(-1, 1)) ** 2))
-    
-#     plt.figure(figsize=(12, 7))
-#     sort_idx = np.argsort(X_train[:, 0])
-    
-#     plt.scatter(X_train[sort_idx, 0], Y_train[sort_idx, output_dim], 
-#                 c='black', marker='x', s=100, label='Noisy Training Values')
-#     plt.plot(X_train[sort_idx, 0], Y_pred_mean[sort_idx, 0], 'bo-', 
-#              linewidth=2, markersize=6, label='Predicted mean')
-#     plt.plot(X_train[sort_idx, 0], Y_true[sort_idx, output_dim], 'r-', 
-#              linewidth=3, label='True function')
-#     plt.fill_between(X_train[sort_idx, 0],
-#                     (Y_pred_mean[sort_idx, 0] - 2 * Y_pred_std[sort_idx, 0]),
-#                     (Y_pred_mean[sort_idx, 0] + 2 * Y_pred_std[sort_idx, 0]),
-#                     alpha=0.2, color='blue', label='95% Confidence Interval')
-    
-#     plt.xlabel('First Input Dimension')
-#     plt.ylabel(f'Output (Dimension {output_dim + 1})')
-#     plt.title(f'PCGP Results for {meta["function"]} Function')
-#     plt.legend()
-#     plt.grid(True, linestyle='--', alpha=0.6)
-#     plt.tight_layout()
-    
-#     print("\n" + "="*50)
-#     print(f"PCGP: {meta['function']} Function Results".center(50))
-#     print("="*50)
-#     print(f"{'Training RMSE:':<20}{train_rmse:.4f}")
-#     print("="*50 + "\n")
-    
-#     plt.show()
-
-# def run_surmise_experiment(function_name='borehole', output_dim=0, n_samples=100, noise_level=0.05):
-#     """Run experiment using surmise's PCGP implementation"""
-#     func_caller = TestFuncCaller(function_name)
-#     meta = func_caller.info
-    
-#     theta_train = np.random.uniform(0, 1, (n_samples, meta['thetadim'])) 
-#     X_train = np.random.uniform(0, 1, (n_samples, meta['xdim']))
-    
-#     Y_train = func_caller.info['nofailmodel'](X_train, theta_train)
-#     Y_true = func_caller.info['true_func'](X_train)
-    
-#     Y_train += noise_level * np.std(Y_train) 
-
-#     theta_emu_train = X_train 
-#     x_emu_train = np.array([[0]])
-#     f_emu_train = Y_train[:, output_dim].reshape(1, -1) 
-    
-#     emu = emulator(
-#         x=x_emu_train, 
-#         theta=theta_emu_train, 
-#         f=f_emu_train, 
-#         method='PCGP',
-#         options={'epsilon': 0})
-    
-#     emu.fit()
-    
-#     pred = emu.predict(x=x_emu_train, theta=X_train)
-#     Y_pred_mean = pred.mean().flatten()
-#     Y_pred_std = np.sqrt(pred.var()).flatten()
-#     train_rmse = np.sqrt(np.mean((Y_pred_mean - Y_train[:, output_dim]) ** 2))
-    
-#     plt.figure(figsize=(12, 7))
-#     sort_idx = np.argsort(X_train[:, 0])
-    
-#     plt.scatter(X_train[sort_idx, 0], Y_train[sort_idx, output_dim], 
-#                 c='black', marker='x', s=100, label='Noisy Training Values')
-#     plt.plot(X_train[sort_idx, 0], Y_pred_mean[sort_idx], 'go-', 
-#              linewidth=2, markersize=6, label='Surmise Predicted mean')
-#     plt.plot(X_train[sort_idx, 0], Y_true[sort_idx, output_dim], 'r-', 
-#              linewidth=3, label='True function')
-#     plt.fill_between(X_train[sort_idx, 0],
-#                     (Y_pred_mean[sort_idx] - 2 * Y_pred_std[sort_idx]),
-#                     (Y_pred_mean[sort_idx] + 2 * Y_pred_std[sort_idx]),
-#                     alpha=0.2, color='green', label='95% Confidence Interval')
-    
-#     plt.xlabel('First Input Dimension')
-#     plt.ylabel(f'Output (Dimension {output_dim + 1})')
-#     plt.title(f'Surmise PCGP Results for {meta["function"]} Function')
-#     plt.legend()
-#     plt.grid(True, linestyle='--', alpha=0.6)
-#     plt.tight_layout()
-    
-#     print("\n" + "="*50)
-#     print(f"Surmise PCGP: {meta['function']} Function Results".center(50))
-#     print("="*50)
-#     print(f"{'Training RMSE:':<20}{train_rmse:.4f}")
-#     print(emu)  
-#     print("="*50 + "\n")
-    
-#     plt.show()
-
-# if __name__ == "__main__":
-#     np.random.seed(42)
-#     run_experiments()
-#     # run_pcgp_experiment(function_name='borehole')
-#     # run_pcgp_experiment(function_name='otlcircuit')
-#     # run_pcgp_experiment(function_name='piston')
-#     # run_pcgp_experiment(function_name='wingweight')
-#     # run_surmise_experiment(function_name='borehole')
-#     # run_surmise_experiment(function_name='otlcircuit')
-#     # run_surmise_experiment(function_name='piston')
-#     # run_surmise_experiment(function_name='wingweight')
+    main()
+    analyze_results()
