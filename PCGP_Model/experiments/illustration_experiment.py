@@ -8,7 +8,16 @@ from helper import run_pcgp, run_surmise
 from testfunc_wrapper import TestFuncCaller
 from surmise.emulation import emulator
 
-def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim=0):
+def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim_idx=0):
+    """
+    Runs experiments to compare PCGP and Surmise models on test functions.
+
+    Args:
+        n_train (int): Number of training data points.
+        n_test (int): Number of test data points.
+        noise_level (float): The level of noise to add to training data.
+        output_dim_idx (int): The output dimension to be modeled and visualized.
+    """
     test_functions = ['borehole', 'otlcircuit', 'piston']
     models = ['pcgp', 'surmise']
     
@@ -21,9 +30,8 @@ def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim=0):
         X_train = np.random.uniform(0, 1, (n_train, meta['xdim']))
 
         Y_train = func_caller.info['nofailmodel'](X_train, theta_train)
-        Y_true_train = func_caller.info['true_func'](X_train)
+        Y_true_train_raw = func_caller.info['true_func'](X_train) 
         
-        # Y_train += noise_level * np.std(Y_train) * np.random.randn(*Y_train.shape)
         Y_train += noise_level * np.std(Y_train) 
 
         X_test = np.random.uniform(0, 1, (n_test, meta['xdim']))
@@ -36,9 +44,10 @@ def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim=0):
         sort_idx_train = np.argsort(X_train[:, 0])
         sort_idx_test = np.argsort(X_test[:, 0])
         
-        plt.scatter(X_train[sort_idx_train, 0], Y_train[sort_idx_train, output_dim], 
+        plt.scatter(X_train[sort_idx_train, 0], Y_train[sort_idx_train, output_dim_idx], 
                    c='black', marker='x', s=100, label='Noisy Training Values', alpha=0.7)
-        plt.plot(X_train[sort_idx_train, 0], Y_true_train[sort_idx_train, output_dim], 'r-', 
+        
+        plt.plot(X_train[sort_idx_train, 0], Y_true_train_raw[sort_idx_train, output_dim_idx], 'r-', 
                 linewidth=3, label='True function (train)')
         
         results = {}
@@ -48,19 +57,19 @@ def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim=0):
                 Y_pred_mean, Y_pred_std = run_pcgp(
                     n_components=1,
                     input_dim=meta['xdim'],
-                    output_dim=output_dim,
+                    output_dim_idx=output_dim_idx, 
                     X_train=X_train,
                     Y_train=Y_train,
                     X_test=X_test
                 )
                 
-                test_rmse = np.sqrt(np.mean((Y_pred_mean.flatten() - Y_test_true[:, output_dim]) ** 2))
+                test_rmse = np.sqrt(np.mean((Y_pred_mean.flatten() - Y_test_true[:, output_dim_idx]) ** 2))
                 
                 plt.plot(X_test[sort_idx_test, 0], Y_pred_mean[sort_idx_test, 0], 'b-', 
                         linewidth=3, label='PCGP Predicted mean')
                 plt.fill_between(X_test[sort_idx_test, 0],
-                                (Y_pred_mean[sort_idx_test, 0] - 2 * Y_pred_std[sort_idx_test, 0]),
-                                (Y_pred_mean[sort_idx_test, 0] + 2 * Y_pred_std[sort_idx_test, 0]),
+                                (Y_pred_mean[sort_idx_test, 0].flatten() - 2 * Y_pred_std[sort_idx_test, 0].flatten()),
+                                (Y_pred_mean[sort_idx_test, 0].flatten() + 2 * Y_pred_std[sort_idx_test, 0].flatten()),
                                 alpha=0.2, color='blue', label='PCGP 95% CI')
                 
                 results['pcgp'] = test_rmse
@@ -75,19 +84,19 @@ def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim=0):
                 Y_pred_mean, Y_pred_std, emu = run_surmise(
                     n_components=1,
                     input_dim=meta['xdim'],
-                    output_dim=output_dim,
+                    output_dim_idx=output_dim_idx, 
                     X_train=X_train,
                     Y_train=Y_train,
                     X_test=X_test
                 )
                 
-                test_rmse = np.sqrt(np.mean((Y_pred_mean.flatten() - Y_test_true[:, output_dim]) ** 2))
+                test_rmse = np.sqrt(np.mean((Y_pred_mean.flatten() - Y_test_true[:, output_dim_idx]) ** 2))
                 
                 plt.plot(X_test[sort_idx_test, 0], Y_pred_mean[sort_idx_test, 0], 'g--', 
                         linewidth=3, label='Surmise Predicted mean')
                 plt.fill_between(X_test[sort_idx_test, 0],
-                                (Y_pred_mean[sort_idx_test, 0] - 2 * Y_pred_std[sort_idx_test, 0]),
-                                (Y_pred_mean[sort_idx_test, 0] + 2 * Y_pred_std[sort_idx_test, 0]),
+                                (Y_pred_mean[sort_idx_test, 0].flatten() - 2 * Y_pred_std[sort_idx_test, 0].flatten()),
+                                (Y_pred_mean[sort_idx_test, 0].flatten() + 2 * Y_pred_std[sort_idx_test, 0].flatten()),
                                 alpha=0.15, color='green', label='Surmise 95% CI')
                 
                 results['surmise'] = test_rmse
@@ -100,7 +109,7 @@ def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim=0):
                 print("="*50)
         
         plt.xlabel('First Input Dimension')
-        plt.ylabel(f'Output (Dimension {output_dim + 1})')
+        plt.ylabel(f'Output (Dimension {output_dim_idx + 1})') 
         plt.title(f'PCGP vs Surmise Comparison for {meta["function"]} Function')
         plt.legend()
         plt.grid(True, linestyle='--', alpha=0.6)
