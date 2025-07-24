@@ -21,6 +21,7 @@ ntest = 150
 def calculate_rmse(ytrue, ypred):
     rmse = np.sqrt(np.mean((ytrue - ypred) ** 2))
     return rmse
+
 def main():
     np.random.seed(42)
     noise_level = 0.05
