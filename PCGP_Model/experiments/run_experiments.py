@@ -14,10 +14,9 @@ import pathlib
 outputdir = r'experiments/output/'
 pathlib.Path(outputdir).mkdir(exist_ok=True)
 
-rep_n = 5 
 output_dims = [1]
-ns = [50, 100, 200]  
-funcs = ['borehole', 'otlcircuit', 'piston', 'wingweight']  
+ns = [100, 200, 300]  
+test_functions = ['borehole', 'otlcircuit', 'piston']
 ntest = 150
 
 def calculate_rmse(ytrue, ypred):
@@ -25,33 +24,37 @@ def calculate_rmse(ytrue, ypred):
     return rmse
 
 def run_pcgp_model(data, output_dim, n_components=None):
-    xtrain, xtest, ytrain = data['xtrain'], data['xtest'], data['ytrain']
+    X_train, X_test, Y_train = data['xtrain'], data['xtest'], data['ytrain']
     
     if n_components is None:
         n_components = min(output_dim, 10)
     
     pcgp = PrincipalComponentGaussianProcessModel(
         n_components=n_components,
-        input_dim=xtrain.shape[1],
+        input_dim=X_train.shape[1],
         output_dim=output_dim
     )
     
-    ranges = np.column_stack([np.zeros(xtrain.shape[1]), np.ones(xtrain.shape[1])])
+    ranges = np.column_stack([np.zeros(X_train.shape[1]), np.ones(X_train.shape[1])])
     
-    fitted_model = pcgp.fit(xtrain, ytrain.T, ranges)
+    fitted_model = pcgp.fit(
+        X_train, 
+        Y_train[:, output_dim].reshape(-1, 1), 
+        ranges
+    )
     
-    pred_mean, _ = fitted_model.predict(xtest, ranges, return_std=True)
+    pred_mean, _ = fitted_model.predict(X_test, ranges, return_std=True)
     
     return pred_mean.T
 
 def run_surmise_pcgp_model(data, output_dim):
-    xtrain, xtest, ytrain = data['xtrain'], data['xtest'], data['ytrain']
+    X_train, X_test, Y_train = data['xtrain'], data['xtest'], data['ytrain']
     
-    theta_emu_train = xtrain
+    theta_emu_train = X_train
 
-    x_emu_train = np.arange(output_dim).reshape(-1, 1)  
+    x_emu_train = np.array([[0]])
     
-    f_emu_train = ytrain  
+    f_emu_train = Y_train[:, output_dim].reshape(1, -1) 
     
     emu = emulator(
         x=x_emu_train,       
@@ -62,15 +65,50 @@ def run_surmise_pcgp_model(data, output_dim):
     )
     emu.fit()
     
-    pred = emu.predict(x=x_emu_train, theta=xtest)
+    pred = emu.predict(x=x_emu_train, theta=X_test)
     pred_mean = pred.mean().T  
     
     return pred_mean
 
 def main():
     np.random.seed(42)
+    noise_level = 0.05
+    for n in ns:
+        for function in test_functions:
+            func_caller = TestFuncCaller(function)
+            meta = func_caller.info
+            
+            # input train
+            theta_train = np.uniform(0, 1, (n, meta['thetadim']))
+            X_train = np.random.uniform(0, 1, (n, meta['xdim']))
+            
+            # output train
+            Y_train = func_caller.info['nofailmodel'](X_train, theta_train)
+            Y_true_train = func_caller.info['true_func'](X_train)
+            Y_train += noise_level * np.std(Y_train)
+
+            # test data
+            X_test = np.random.uniform(0, 1, (ntest, meta['xdim']))
+            theta_test = np.random.uniform(0, 1, (ntest, meta['thetadim']))
+            Y_test_true = func_caller.info['nofailmodel'](X_test, theta_test)
+
+            for output in output_dims:
+                # start timer
+
+                # run pcgp
+                pcgp = PrincipalComponentGaussianProcessModel(
+                    n_components = 1,
+                    input_dim=meta['xdim'],
+                    output_dim=1
+                )
+
+                ranges = np.column_stack([np.zeros(meta['xdim']), np.ones(meta['xdim'])])
+
+                fitted
+
+                pass
+        
     
-    pass
 
 if __name__ == "__main__":
     main()

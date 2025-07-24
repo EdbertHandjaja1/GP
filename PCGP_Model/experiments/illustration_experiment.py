@@ -4,11 +4,11 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PCGP_MODEL import PrincipalComponentGaussianProcessModel
+from helper import run_pcgp, run_surmise
 from testfunc_wrapper import TestFuncCaller
 from surmise.emulation import emulator
 
 def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim=0):
-    # test_functions = ['borehole', 'otlcircuit', 'piston', 'wingweight']
     test_functions = ['borehole', 'otlcircuit', 'piston']
     models = ['pcgp', 'surmise']
     
@@ -30,14 +30,12 @@ def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim=0):
         theta_test = np.random.uniform(0, 1, (n_test, meta['thetadim']))
 
         Y_test_true = func_caller.info['nofailmodel'](X_test, theta_test)
-        Y_true_test = func_caller.info['true_func'](X_test)
 
         plt.figure(figsize=(15, 8))
         
         sort_idx_train = np.argsort(X_train[:, 0])
         sort_idx_test = np.argsort(X_test[:, 0])
         
-        # plot training
         plt.scatter(X_train[sort_idx_train, 0], Y_train[sort_idx_train, output_dim], 
                    c='black', marker='x', s=100, label='Noisy Training Values', alpha=0.7)
         plt.plot(X_train[sort_idx_train, 0], Y_true_train[sort_idx_train, output_dim], 'r-', 
@@ -47,20 +45,15 @@ def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim=0):
         
         for model in models:
             if model == 'pcgp':
-                pcgp = PrincipalComponentGaussianProcessModel(
+                Y_pred_mean, Y_pred_std = run_pcgp(
                     n_components=1,
                     input_dim=meta['xdim'],
-                    output_dim=1
+                    output_dim=output_dim,
+                    X_train=X_train,
+                    Y_train=Y_train,
+                    X_test=X_test
                 )
                 
-                ranges = np.column_stack([np.zeros(meta['xdim']), np.ones(meta['xdim'])])
-                fitted_model = pcgp.fit(
-                    X_train, 
-                    Y_train[:, output_dim].reshape(-1, 1), 
-                    ranges
-                )
-                
-                Y_pred_mean, Y_pred_std = fitted_model.predict(X_test, ranges, return_std=True)
                 test_rmse = np.sqrt(np.mean((Y_pred_mean.flatten() - Y_test_true[:, output_dim]) ** 2))
                 
                 plt.plot(X_test[sort_idx_test, 0], Y_pred_mean[sort_idx_test, 0], 'b-', 
@@ -78,29 +71,23 @@ def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim=0):
                 print(f"{'Test RMSE:':<20}{test_rmse:.4f}")
                 print("="*50)
             
-            else:  
-                theta_emu_train = X_train 
-                x_emu_train = np.array([[0]])
-                f_emu_train = Y_train[:, output_dim].reshape(1, -1) 
+            else:  # surmise
+                Y_pred_mean, Y_pred_std, emu = run_surmise(
+                    n_components=1,
+                    input_dim=meta['xdim'],
+                    output_dim=output_dim,
+                    X_train=X_train,
+                    Y_train=Y_train,
+                    X_test=X_test
+                )
                 
-                emu = emulator(
-                    x=x_emu_train, 
-                    theta=theta_emu_train, 
-                    f=f_emu_train, 
-                    method='PCGP',
-                    options={'epsilon': 0})
-                emu.fit()
+                test_rmse = np.sqrt(np.mean((Y_pred_mean.flatten() - Y_test_true[:, output_dim]) ** 2))
                 
-                pred = emu.predict(x=x_emu_train, theta=X_test)
-                Y_pred_mean = pred.mean().flatten()
-                Y_pred_std = np.sqrt(pred.var()).flatten()
-                test_rmse = np.sqrt(np.mean((Y_pred_mean - Y_test_true[:, output_dim]) ** 2))
-                
-                plt.plot(X_test[sort_idx_test, 0], Y_pred_mean[sort_idx_test], 'g--', 
+                plt.plot(X_test[sort_idx_test, 0], Y_pred_mean[sort_idx_test, 0], 'g--', 
                         linewidth=3, label='Surmise Predicted mean')
                 plt.fill_between(X_test[sort_idx_test, 0],
-                                (Y_pred_mean[sort_idx_test] - 2 * Y_pred_std[sort_idx_test]),
-                                (Y_pred_mean[sort_idx_test] + 2 * Y_pred_std[sort_idx_test]),
+                                (Y_pred_mean[sort_idx_test, 0] - 2 * Y_pred_std[sort_idx_test, 0]),
+                                (Y_pred_mean[sort_idx_test, 0] + 2 * Y_pred_std[sort_idx_test, 0]),
                                 alpha=0.15, color='green', label='Surmise 95% CI')
                 
                 results['surmise'] = test_rmse
