@@ -233,10 +233,10 @@ class PrincipalComponentGaussianProcessModel:
             
             nll = self._negative_log_marginal_likelihood(rho_flattened, lambda_w, noise_var)
             
-            if iteration_count[0] % 10 == 0:
-                print(f"Iteration {iteration_count[0]}: NLL = {nll:.6f}, noise_var = {noise_var:.6f}")
-                print(f"  Sample rho: {rho_flattened[:3]}")
-                print(f"  Sample lambda_w: {lambda_w[:3]}")
+            # if iteration_count[0] % 10 == 0:
+            #     print(f"Iteration {iteration_count[0]}: NLL = {nll:.6f}, noise_var = {noise_var:.6f}")
+            #     print(f"  Sample rho: {rho_flattened[:3]}")
+            #     print(f"  Sample lambda_w: {lambda_w[:3]}")
             
             return nll
 

@@ -1,0 +1,10 @@
+metric,value
+modelname,PCGP
+runno,n100_rep0
+function,borehole
+modelrun,n100_rep0_borehole_1
+n,100
+output_dim,1
+rep,0
+traintime,0.7840549945831299
+rmse,8.138034688085433

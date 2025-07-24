@@ -14,19 +14,17 @@ import pathlib
 outputdir = r'experiments/output/'
 pathlib.Path(outputdir).mkdir(exist_ok=True)
 
-rep_n = 10  
-output_dims = [1, 4, 8, 16]
-ns = [50, 100, 250, 500]  
+rep_n = 5 
+output_dims = [1]
+ns = [50, 100, 200]  
 funcs = ['borehole', 'otlcircuit', 'piston', 'wingweight']  
-ntest = 800 
+ntest = 150
 
-def evaluate_model_performance(ytrue, ypred):
-    """Calculate RMSE"""
+def calculate_rmse(ytrue, ypred):
     rmse = np.sqrt(np.mean((ytrue - ypred) ** 2))
     return rmse
 
 def run_pcgp_model(data, output_dim, n_components=None):
-    """Run PCGP model - same as before"""
     xtrain, xtest, ytrain = data['xtrain'], data['xtest'], data['ytrain']
     
     if n_components is None:
@@ -47,7 +45,6 @@ def run_pcgp_model(data, output_dim, n_components=None):
     return pred_mean.T
 
 def run_surmise_pcgp_model(data, output_dim):
-    """Run Surmise PCGP model - CORRECTED to match illustration approach"""
     xtrain, xtest, ytrain = data['xtrain'], data['xtest'], data['ytrain']
     
     theta_emu_train = xtrain
@@ -71,7 +68,6 @@ def run_surmise_pcgp_model(data, output_dim):
     return pred_mean
 
 def main():
-    """Main benchmarking function"""
     np.random.seed(42)
     
     for function in funcs:
@@ -129,7 +125,7 @@ def main():
                             pred_mean = model_func(data, output_dim)
                             train_time = time.time() - train_start
                             
-                            rmse = evaluate_model_performance(ytrue_test.T, pred_mean)
+                            rmse = calculate_rmse(ytrue_test.T, pred_mean)
                             
                             result = {
                                 'modelname': model_name,

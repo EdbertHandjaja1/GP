@@ -1,0 +1,10 @@
+metric,value
+modelname,PCGP
+runno,n50_rep3
+function,otlcircuit
+modelrun,n50_rep3_otlcircuit_1
+n,50
+output_dim,1
+rep,3
+traintime,0.26846885681152344
+rmse,0.004817704801574763

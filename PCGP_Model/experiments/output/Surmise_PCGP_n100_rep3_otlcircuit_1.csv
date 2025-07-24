@@ -1,0 +1,10 @@
+metric,value
+modelname,Surmise_PCGP
+runno,n100_rep3
+function,otlcircuit
+modelrun,n100_rep3_otlcircuit_1
+n,100
+output_dim,1
+rep,3
+traintime,0.02112889289855957
+rmse,0.0007543527035187393
