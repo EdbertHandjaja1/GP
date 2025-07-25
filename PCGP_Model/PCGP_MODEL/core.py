@@ -11,6 +11,8 @@ class PrincipalComponentGaussianProcessModel:
     This model combines Principal Component Analysis (PCA) with Gaussian Processes (GPs)
     to model high-dimensional outputs. PCA is used to reduce the dimensionality of the
     output space, and then individual GPs are trained on the principal component weights.
+    
+    Optimized version with matrix caching to prevent recomputation of expensive operations.
     """
     def __init__(self, n_components=9, input_dim=12, output_dim=28):
         """
@@ -38,6 +40,39 @@ class PrincipalComponentGaussianProcessModel:
         self.rho = np.ones((n_components, input_dim)) * 0.1
         self.lambda_w = np.ones(n_components) * 1.0
         self.noise_var = 1e-3
+        
+        # store matrices
+        self._stored_kernels = [None] * n_components  
+        self._stored_cholesky = [None] * n_components 
+        self._stored_sigma = [None] * n_components    
+        self._last_hyperparams = None  
+        
+    def _hyperparams_changed(self, rho_flattened, lambda_w, noise_var):
+        """Check if hyperparameters have changed since last computation."""
+        current_params = (tuple(rho_flattened), tuple(lambda_w), noise_var)
+        if self._last_hyperparams is None or self._last_hyperparams != current_params:
+            self._last_hyperparams = current_params
+            return True
+        return False
+    
+    def _compute_and_store_matrices(self):
+        """Compute and store all kernel matrices and Cholesky decompositions."""
+        n = self.X_train_std.shape[0]
+        X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
+        
+        for k in range(self.n_components):
+            variance = 1.0 / self.lambda_w[k]
+            rho = self.rho[k, :]
+            kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
+            K_k = kernel(X_train_tf, X_train_tf)
+            self._stored_kernels[k] = K_k
+            
+            Sigma_k = K_k + self.noise_var * tf.eye(n, dtype=tf.float64)
+            self._stored_sigma[k] = Sigma_k
+            
+            L_k = tf.linalg.cholesky(Sigma_k)
+            
+            self._stored_cholesky[k] = L_k
 
     def standardize_inputs(self, X, ranges):
         """
@@ -123,7 +158,7 @@ class PrincipalComponentGaussianProcessModel:
 
     def _build_kernel_matrix(self, X1, X2=None, component_idx=None):
         """
-        Builds a Gaussian Kernel covariance matrix for given input data.
+        Computes a Gaussian Kernel covariance matrix for given input data.
 
         Arguments:
             X1 (tf.Tensor or np.ndarray): The first set of input points. Shape (n1, input_dim).
@@ -157,7 +192,7 @@ class PrincipalComponentGaussianProcessModel:
 
     def _negative_log_marginal_likelihood(self, rho_flattened, lambda_w, noise_var):
         """
-        Calculate the negative log marginal likelihood for PCGP model using _build_kernel_matrix.
+        Calculate the negative log marginal likelihood for PCGP model using stored matrices.
 
         Args:
             rho_flattened (np.ndarray): Flattened array of length scales (n_components * input_dim)
@@ -167,22 +202,22 @@ class PrincipalComponentGaussianProcessModel:
         Returns:
             float: Negative log marginal likelihood value
         """
+        # Update hyperparameters and recompute matrices if they changed
         self.rho = np.reshape(rho_flattened, (self.n_components, self.input_dim))
         self.lambda_w = lambda_w
         self.noise_var = noise_var
+        
+        if self._hyperparams_changed(rho_flattened, lambda_w, noise_var):
+            self._compute_and_store_matrices()
 
-        m = self.output_dim 
-        n = self.X_train_std.shape[0] 
-        q = self.n_components
-
+        n = self.X_train_std.shape[0]
         total_nll = 0
 
         for k in range(self.n_components):
             w_k = tf.constant(self.weights[:, k:k+1], dtype=tf.float64)
-            K_k = self._build_kernel_matrix(self.X_train_std, component_idx=k)
-
-            Sigma_k = K_k + self.noise_var * tf.eye(n, dtype=tf.float64)
-            L_k = tf.linalg.cholesky(Sigma_k)
+            
+            # Use stored matrices
+            L_k = self._stored_cholesky[k]
 
             # term 1
             alpha_k = tf.linalg.cholesky_solve(L_k, w_k)
@@ -195,7 +230,6 @@ class PrincipalComponentGaussianProcessModel:
             constant = n * np.log(2.0 * np.pi)
 
             nll_k = 0.5 * (data_fit_k + log_det_k + constant)
-
             total_nll += nll_k
 
         return tf.cast(total_nll, dtype=tf.float64).numpy()
@@ -218,6 +252,8 @@ class PrincipalComponentGaussianProcessModel:
         self.X_train_std = self.standardize_inputs(X_train, ranges)
         self.Y_train_std = self._standardize_output(Y_train)
         self.weights, self.phi_basis = self.compute_principal_components(self.Y_train_std)
+        
+        self._last_hyperparams = None
         
         iteration_count = [0]
         
@@ -282,10 +318,9 @@ class PrincipalComponentGaussianProcessModel:
 
         return self
 
-
     def predict(self, X_new, ranges, return_std=False, debug=True):
         """
-        Makes predictions using the fitted PCGP model.
+        Makes predictions using the fitted PCGP model with stored matrices.
 
         Arguments:
             X_new (np.ndarray): The new input data for which to make predictions.
@@ -316,18 +351,15 @@ class PrincipalComponentGaussianProcessModel:
             w_k = tf.constant(self.weights[:, k:k+1], dtype=tf.float64)
             phi_k = tf.constant(self.phi_basis[:, k:k+1], dtype=tf.float64)
             
-            K_k = self._build_kernel_matrix(X_train_tf, component_idx=k)
+            L_k = self._stored_cholesky[k]
             k_star = self._build_kernel_matrix(X_new_tf, X_train_tf, component_idx=k)
-            k_star_star = self._build_kernel_matrix(X_new_tf, component_idx=k)
-            
-            Sigma_k = K_k + self.noise_var * tf.eye(n_train, dtype=tf.float64)
-            L_k = tf.linalg.cholesky(Sigma_k)
             
             alpha_k = tf.linalg.cholesky_solve(L_k, w_k)
             mu_k = tf.matmul(k_star, alpha_k)
             mu_g[:, k] = tf.squeeze(mu_k).numpy()
             
             if return_std:
+                k_star_star = self._build_kernel_matrix(X_new_tf, component_idx=k)
                 v_k = tf.linalg.cholesky_solve(L_k, tf.transpose(k_star))  
 
                 Cov_k = k_star_star - tf.matmul(k_star, v_k)
@@ -350,68 +382,3 @@ class PrincipalComponentGaussianProcessModel:
         std_y = np.sqrt(var_y)
         
         return mean_y, std_y
-
-    # def predict(self, X_new, ranges, return_std=False, debug=True):
-    #     """
-    #     Makes predictions using the fitted PCGP model with GPflow comparison at each component.
-    #     """
-    #     X_new_std = self.standardize_inputs(X_new, ranges)
-    #     X_new_tf = tf.convert_to_tensor(X_new_std, dtype=tf.float64)
-    #     X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
-        
-    #     n_train = self.X_train_std.shape[0]
-    #     n_test = X_new_std.shape[0]
-        
-    #     mu_g = np.zeros((n_test, self.n_components))
- 
-    #     if return_std:
-    #         cov_g = np.zeros((n_test * self.n_components, n_test * self.n_components))
-        
-    #     for k in range(self.n_components):
-    #         w_k = tf.constant(self.weights[:, k:k+1], dtype=tf.float64)
-            
-    #         K_k = self._build_kernel_matrix(X_train_tf, component_idx=k)
-    #         k_star = self._build_kernel_matrix(X_new_tf, X_train_tf, component_idx=k)
-    #         k_star_star = self._build_kernel_matrix(X_new_tf, component_idx=k)
-            
-    #         Sigma_k = K_k + self.noise_var * tf.eye(n_train, dtype=tf.float64)
-    #         L_k = tf.linalg.cholesky(Sigma_k)
-            
-    #         alpha_k = tf.linalg.cholesky_solve(L_k, w_k)
-    #         mu_k = tf.matmul(k_star, alpha_k)
-    #         mu_g[:, k] = tf.squeeze(mu_k).numpy()
-            
-    #         if return_std:
-    #             v_k = tf.linalg.cholesky_solve(L_k, tf.transpose(k_star))  
-    #             Cov_k = k_star_star - tf.matmul(k_star, v_k)
-  
-    #             start_idx = k * n_test
-    #             end_idx = (k + 1) * n_test
-    #             cov_g[start_idx:end_idx, start_idx:end_idx] = Cov_k.numpy()
-        
-    #     phi_tf = tf.convert_to_tensor(self.phi_basis, dtype=tf.float64)
-    #     mu_y_std = tf.matmul(mu_g, phi_tf, transpose_b=True)
-    #     mean_y = self._unstandardize_output(mu_y_std.numpy())
-        
-    #     if not return_std:
-    #         return mean_y
-        
-    #     phi_together = np.zeros((n_test * self.output_dim, n_test * self.n_components))
-        
-    #     for i in range(n_test):
-    #         for j in range(self.n_components):
-    #             row_start = i * self.output_dim
-    #             row_end = (i + 1) * self.output_dim
-    #             col_idx = i * self.n_components + j
-                
-    #             phi_together[row_start:row_end, col_idx] = self.phi_basis[:, j]
-   
-    #     temp = np.dot(phi_together, cov_g)
-    #     cov_y_std = np.dot(temp, phi_together.T)
-    #     cov_y_std += self.noise_var * np.eye(n_test * self.output_dim)
-
-    #     var_y_std = np.diag(cov_y_std).reshape(n_test, self.output_dim)       
-    #     var_y = var_y_std * (self.standardization_scale ** 2)
-    #     std_y = np.sqrt(var_y)
-        
-    #     return mean_y, std_y
