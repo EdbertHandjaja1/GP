@@ -69,12 +69,11 @@
 
 
 import numpy as np
-import matplotlib.pyplot as plt
 import sys
 import os
+import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PCGP_MODEL import PrincipalComponentGaussianProcessModel
-from testfunc_wrapper import TestFuncCaller
 from surmise.emulation import emulator
 
 def run_pcgp(n_components, input_dim, output_dim_idx, X_train, Y_train, X_test):
@@ -103,15 +102,21 @@ def run_pcgp(n_components, input_dim, output_dim_idx, X_train, Y_train, X_test):
 
     Y_train_copy = Y_train[:, output_dim_idx].copy().reshape(-1, 1)
 
+    start_train = time.time()
     fitted_model = pcgp.fit(
         X_train.copy(),
         Y_train_copy,
         ranges
     )
+    end_train = time.time()
+    train_time = end_train - start_train
 
+    start_pred = time.time()
     Y_pred_mean, Y_pred_std = fitted_model.predict(X_test, ranges, return_std=True)
+    end_pred = time.time()
+    pred_time = end_pred - start_pred
 
-    return Y_pred_mean, Y_pred_std
+    return Y_pred_mean, Y_pred_std, train_time, pred_time
 
 
 def run_surmise(n_components, input_dim, output_dim_idx, X_train, Y_train, X_test):
@@ -136,6 +141,7 @@ def run_surmise(n_components, input_dim, output_dim_idx, X_train, Y_train, X_tes
     
     f_emu_train = Y_train[:, output_dim_idx].copy().reshape(1, -1)
     
+    start_train = time.time()
     emu = emulator(
         x=x_emu_train, 
         theta=theta_emu_train, 
@@ -144,12 +150,18 @@ def run_surmise(n_components, input_dim, output_dim_idx, X_train, Y_train, X_tes
         options={'epsilon': 0}
     )
     emu.fit()
+    end_train = time.time()
+    train_time = end_train - start_train
     
+    start_pred = time.time()
     pred = emu.predict(x=x_emu_train, theta=X_test) 
+    end_pred = time.time()
+    pred_time = end_pred - start_pred
+
     Y_pred_mean = pred.mean().flatten()
     Y_pred_std = np.sqrt(pred.var()).flatten()
     
     Y_pred_mean = Y_pred_mean.reshape(-1, 1)
     Y_pred_std = Y_pred_std.reshape(-1, 1)
     
-    return Y_pred_mean, Y_pred_std, emu
+    return Y_pred_mean, Y_pred_std, emu, train_time, pred_time

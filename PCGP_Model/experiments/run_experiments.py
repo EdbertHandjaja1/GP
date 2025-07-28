@@ -15,7 +15,9 @@ outputdir = r'experiments/output/'
 pathlib.Path(outputdir).mkdir(exist_ok=True)
 
 output_dims = [1]
-ns = [100, 200, 300]
+# ns = [100, 200, 300]
+# cap at 1000
+ns = [500]
 test_functions = ['borehole', 'otlcircuit', 'piston']
 ntest = 150
 noise_level = 0.05
@@ -50,8 +52,7 @@ def run_experiment(n, function, output_idx_to_model):
     results = []
 
     # PCGP
-    start_time_pcgp = time.time()
-    Y_pred_mean_pcgp, Y_pred_std_pcgp = run_pcgp(
+    Y_pred_mean_pcgp, Y_pred_std_pcgp, train_time, pred_time = run_pcgp(
         n_components=1,
         input_dim=meta['xdim'],
         output_dim_idx=output_idx_to_model,
@@ -59,8 +60,6 @@ def run_experiment(n, function, output_idx_to_model):
         Y_train=Y_train,
         X_test=X_test
     )
-    end_time_pcgp = time.time()
-    time_pcgp = end_time_pcgp - start_time_pcgp
 
     rmse_pcgp = calculate_rmse(Y_test_true[:, output_idx_to_model].reshape(-1, 1), Y_pred_mean_pcgp)
 
@@ -69,13 +68,13 @@ def run_experiment(n, function, output_idx_to_model):
         'n_train': n,
         'function': function,
         'output_dim_modeled_idx': output_idx_to_model,
-        'training_time': time_pcgp,
+        'training_time': train_time,
+        'prediction_time': pred_time,
         'rmse': rmse_pcgp
     })
 
     # surmise
-    start_time_surmise = time.time()
-    Y_pred_mean_surmise, Y_pred_std_surmise, emu = run_surmise(
+    Y_pred_mean_surmise, Y_pred_std_surmise, emu, train_time, pred_time = run_surmise(
         n_components=1,
         input_dim=meta['xdim'],
         output_dim_idx=output_idx_to_model,
@@ -83,8 +82,6 @@ def run_experiment(n, function, output_idx_to_model):
         Y_train=Y_train,
         X_test=X_test
     )
-    end_time_surmise = time.time()
-    time_surmise = end_time_surmise - start_time_surmise
     rmse_surmise = calculate_rmse(Y_test_true[:, output_idx_to_model].reshape(-1, 1), Y_pred_mean_surmise)
 
     results.append({
@@ -92,7 +89,8 @@ def run_experiment(n, function, output_idx_to_model):
         'n_train': n,
         'function': function,
         'output_dim_modeled_idx': output_idx_to_model,
-        'training_time': time_surmise,
+        'training_time': train_time,
+        'prediction_time': pred_time,
         'rmse': rmse_surmise
     })
 
