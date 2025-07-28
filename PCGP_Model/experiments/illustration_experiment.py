@@ -13,7 +13,7 @@ def evaluate_coverage(intervals, true_values, is_ci=False):
     lower, upper = intervals
     covered = np.logical_and(true_values >= lower, true_values <= upper)
     coverage = np.mean(covered) * 100
-    print(f"{'CI' if is_ci else 'PI'} Coverage: {coverage:.2f}% (Expected: 95%)")
+    print(f"{'CI' if is_ci else 'PI'} Coverage: {coverage:.2f}%")
     return coverage
 
 def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim_idx=0):
@@ -54,7 +54,7 @@ def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim_idx=0):
         
         for model in models:
             if model == 'pcgp':
-                Y_pred_mean, Y_pred_std = run_pcgp(
+                Y_pred_mean, Y_pred_std, _, _ = run_pcgp(
                     n_components=1,
                     input_dim=meta['xdim'],
                     output_dim_idx=output_dim_idx, 
@@ -95,7 +95,7 @@ def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim_idx=0):
                 }
 
             else:  # surmise
-                Y_pred_mean, Y_pred_std, emu = run_surmise(
+                Y_pred_mean, Y_pred_std, _, _, _ = run_surmise(
                     n_components=1,
                     input_dim=meta['xdim'],
                     output_dim_idx=output_dim_idx, 
