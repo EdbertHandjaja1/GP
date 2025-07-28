@@ -6,6 +6,7 @@ import os
 import pandas as pd
 from joblib import Parallel, delayed
 import pathlib
+from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from testfunc_wrapper import TestFuncCaller
 from surmise.emulation import emulator
@@ -15,23 +16,24 @@ outputdir = r'experiments/output/'
 pathlib.Path(outputdir).mkdir(exist_ok=True)
 
 output_dims = [1]
-# ns = [100, 200, 300]
-# cap at 1000
-ns = [500]
+ns = [100, 200, 300, 500, 800]
 test_functions = ['borehole', 'otlcircuit', 'piston']
 ntest = 150
 noise_level = 0.05
+n_reps = 10 
 
 def calculate_rmse(ytrue, ypred):
     rmse = np.sqrt(np.mean((ytrue - ypred) ** 2))
     return rmse
 
-def run_experiment(n, function, output_idx_to_model):
+
+def run_experiment(n, function, output_idx_to_model, rep):
     """
-    Function to run a single experiment (for a given n, function, and output dimension).
+    Function to run a single experiment (for a given n, function, output dimension, and repetition).
     This function will be parallelized.
     """
-    np.random.seed(42) 
+    # use different seed for each repetition to get different data
+    np.random.seed(42 + rep)  
     
     func_caller = TestFuncCaller(function)
     meta = func_caller.info
@@ -42,7 +44,7 @@ def run_experiment(n, function, output_idx_to_model):
 
     # output train
     Y_train = func_caller.info['nofailmodel'](X_train, theta_train)
-    Y_train += noise_level * np.std(Y_train)
+    Y_train += noise_level * np.std(Y_train, axis=0, keepdims=True) * np.random.normal(0, 1, Y_train.shape)
 
     # test
     X_test = np.random.uniform(0, 1, (ntest, meta['xdim']))
@@ -63,14 +65,18 @@ def run_experiment(n, function, output_idx_to_model):
 
     rmse_pcgp = calculate_rmse(Y_test_true[:, output_idx_to_model].reshape(-1, 1), Y_pred_mean_pcgp)
 
+    coverage_pcgp = 0
+
     results.append({
         'model': 'PCGP',
         'n_train': n,
         'function': function,
         'output_dim_modeled_idx': output_idx_to_model,
+        'rep': rep,
         'training_time': train_time,
         'prediction_time': pred_time,
-        'rmse': rmse_pcgp
+        'rmse': rmse_pcgp,
+        'coverage': coverage_pcgp
     })
 
     # surmise
@@ -83,39 +89,64 @@ def run_experiment(n, function, output_idx_to_model):
         X_test=X_test
     )
     rmse_surmise = calculate_rmse(Y_test_true[:, output_idx_to_model].reshape(-1, 1), Y_pred_mean_surmise)
+    coverage_surmise = 0
 
     results.append({
         'model': 'Surmise',
         'n_train': n,
         'function': function,
         'output_dim_modeled_idx': output_idx_to_model,
+        'rep': rep,
         'training_time': train_time,
         'prediction_time': pred_time,
-        'rmse': rmse_surmise
+        'rmse': rmse_surmise,
+        'coverage': coverage_surmise
     })
-
+    
     return results
 
 def main():
     all_results = []
     
     tasks = []
-    for n in ns:
-        for function in test_functions:
-            for output_idx_to_model in [0]:
-                tasks.append((n, function, output_idx_to_model))
+    for rep in range(n_reps):
+        for n in ns:
+            for function in test_functions:
+                for output_idx_to_model in [0]:
+                    tasks.append((n, function, output_idx_to_model, rep))
 
+    print(f"Running {len(tasks)} total experiments...")
+    
     parallel_results = Parallel(n_jobs=-1, verbose=10)(
-        delayed(run_experiment)(n, function, output_idx_to_model)
-        for n, function, output_idx_to_model in tasks
+        delayed(run_experiment)(n, function, output_idx_to_model, rep)
+        for n, function, output_idx_to_model, rep in tasks
     )
 
     for res_list in parallel_results:
         all_results.extend(res_list)
     
     results_df = pd.DataFrame(all_results)
-    results_df.to_csv(os.path.join(outputdir, 'numerical_results.csv'), index=False)
-    print(f"Results saved to {os.path.join(outputdir, 'numerical_results.csv')}")
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f'numerical_results_{timestamp}.csv'
+    filepath = os.path.join(outputdir, filename)
+    
+    results_df.to_csv(filepath, index=False)
+    print(f"Results saved to {filepath}")
+    
+    summary_stats = results_df.groupby(['model', 'n_train', 'function']).agg({
+        'rmse': ['mean', 'std', 'count'],
+        'coverage': ['mean', 'std'],
+        'training_time': ['mean', 'std'],
+        'prediction_time': ['mean', 'std']
+    }).round(4)
+    
+    summary_filename = f'summary_stats_{timestamp}.csv'
+    summary_filepath = os.path.join(outputdir, summary_filename)
+    summary_stats.to_csv(summary_filepath)
+    print(f"Summary statistics saved to {summary_filepath}")
+    
+    return filepath
 
 if __name__ == "__main__":
     main()

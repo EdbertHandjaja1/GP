@@ -32,7 +32,6 @@ def run_experiments(n_train=100, n_test=50, noise_level=0.05, output_dim_idx=0):
         X_train = np.random.uniform(0, 1, (n_train, meta['xdim']))
 
         Y_train = func_caller.info['nofailmodel'](X_train, theta_train)
-        Y_true_train = func_caller.info['true_func'](X_train)  # f(x)
         
         Y_train += noise_level * np.std(Y_train) * np.random.randn(*Y_train.shape)  
 
