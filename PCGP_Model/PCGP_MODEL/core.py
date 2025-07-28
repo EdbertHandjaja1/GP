@@ -202,7 +202,6 @@ class PrincipalComponentGaussianProcessModel:
         Returns:
             float: Negative log marginal likelihood value
         """
-        # Update hyperparameters and recompute matrices if they changed
         self.rho = np.reshape(rho_flattened, (self.n_components, self.input_dim))
         self.lambda_w = lambda_w
         self.noise_var = noise_var

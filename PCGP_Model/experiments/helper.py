@@ -71,7 +71,6 @@ def run_surmise(n_components, input_dim, output_dim_idx, X_train, Y_train, X_tes
     
     f_emu_train = Y_train[:, output_dim_idx].copy().reshape(1, -1)
     
-    start_train = time.time()
     emu = emulator(
         x=x_emu_train, 
         theta=theta_emu_train, 
@@ -79,17 +78,19 @@ def run_surmise(n_components, input_dim, output_dim_idx, X_train, Y_train, X_tes
         method='PCGP', 
         options={'epsilon': 0}
     )
+    start_train = time.time()
     emu.fit()
     end_train = time.time()
     train_time = end_train - start_train
     
     start_pred = time.time()
     pred = emu.predict(x=x_emu_train, theta=X_test) 
-    end_pred = time.time()
-    pred_time = end_pred - start_pred
 
     Y_pred_mean = pred.mean().flatten()
     Y_pred_std = np.sqrt(pred.var()).flatten()
+
+    end_pred = time.time()
+    pred_time = end_pred - start_pred
     
     Y_pred_mean = Y_pred_mean.reshape(-1, 1)
     Y_pred_std = Y_pred_std.reshape(-1, 1)
