@@ -92,6 +92,6 @@ def plot_results(results_filepath='experiments/output/numerical_results.csv', pl
     plt.show()
 
 if __name__ == "__main__":
-    results_file = 'experiments/output/numerical_results_20250728_160858.csv'
+    results_file = 'experiments/output/numerical_results_20250728_224027.csv'
     plot_output_directory = 'experiments/output/'
     plot_results(results_file, plot_output_directory)
