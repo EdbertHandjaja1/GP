@@ -15,12 +15,11 @@ outputdir = r'experiments/output/'
 pathlib.Path(outputdir).mkdir(exist_ok=True)
 
 output_dims = [1]
-ns = [500, 1000, 1500]
-# test_functions = ['borehole', 'otlcircuit', 'piston']
-test_functions = ['borehole']
+ns = [25, 50, 100, 250, 500]
+test_functions = ['borehole', 'otlcircuit', 'piston']
 ntest = 150
 noise_level = 0.05
-n_reps = 1
+n_reps = 3
 
 def calculate_rmse(ytrue, ypred):
     rmse = np.sqrt(np.mean((ytrue - ypred) ** 2))

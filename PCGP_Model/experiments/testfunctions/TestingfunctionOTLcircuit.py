@@ -3,40 +3,42 @@ import numpy as np
 def query_func_meta():
     return {
         'function': 'OTLcircuit',
-        'xdim': 4,  # Rb1, Rb2, Rc1, Rc2
-        'thetadim': 2,  # Rf, beta
+        'xdim': 4, 
+        'thetadim': 2,
         'c_array': np.arange(0, 10, 0.01),
-        'fail_array': np.array([])  # No failure cases by default
+        'fail_array': np.array([]) 
     }
 
-def tstd2theta(tstd):
-    """Convert standardized theta in [0,1] to physical parameters"""
-    if tstd.ndim < 1.5:
-        tstd = tstd[:, None].T
-    (Rfs, betas) = np.split(tstd, tstd.shape[1], axis=1)
+def tstd2theta_otl(tstd):
+    if tstd.ndim == 1:
+        tstd = tstd.reshape(1, -1)
     
-    Rf = 0.5 + Rfs * (3 - 0.5)  # Rf ∈ [0.5, 3]
-    beta = 50 + betas * (300 - 50)  # beta ∈ [50, 300]
+    Rfs, betas = tstd[:, 0], tstd[:, 1]
     
-    return np.hstack((Rf, beta))
+    Rf = 0.5 + Rfs * (3 - 0.5) 
+    beta = 50 + betas * (300 - 50) 
+    
+    return np.column_stack((Rf, beta))
 
-def xstd2x(xstd):
-    """Convert standardized x in [0,1] to physical parameters"""
-    if xstd.ndim < 1.5:
-        xstd = xstd[:, None].T
-    (Rb1s, Rb2s, Rc1s, Rc2s) = np.split(xstd, xstd.shape[1], axis=1)
+def xstd2x_otl(xstd):
+    if xstd.ndim == 1:
+        xstd = xstd.reshape(1, -1)
     
-    Rb1 = 50 + Rb1s * (150 - 50)  # Rb1 ∈ [50, 150]
-    Rb2 = 25 + Rb2s * (75 - 25)   # Rb2 ∈ [25, 75]
-    Rc1 = 1.2 + Rc1s * (2.5 - 1.2)  # Rc1 ∈ [1.2, 2.5]
-    Rc2 = 0.25 + Rc2s * (1.2 - 0.25)  # Rc2 ∈ [0.25, 1.2]
+    Rb1s, Rb2s, Rc1s, Rc2s = xstd[:, 0], xstd[:, 1], xstd[:, 2], xstd[:, 3]
     
-    return np.hstack((Rb1, Rb2, Rc1, Rc2))
+    Rb1 = 50 + Rb1s * (150 - 50)  
+    Rb2 = 25 + Rb2s * (75 - 25)   
+    Rc1 = 1.2 + Rc1s * (2.5 - 1.2)  
+    Rc2 = 0.25 + Rc2s * (1.2 - 0.25)  
+    
+    return np.column_stack((Rb1, Rb2, Rc1, Rc2))
 
-def OTLcircuit_vec(x, theta):
-    """Vectorized computation of OTL circuit voltage"""
-    (Rb1, Rb2, Rc1, Rc2) = np.split(x, x.shape[1], axis=1)
-    (Rf, beta) = np.split(theta, theta.shape[1], axis=1)
+def OTLcircuit_model(x, theta):
+    theta_actual = tstd2theta_otl(theta)
+    x_actual = xstd2x_otl(x)
+    
+    Rb1, Rb2, Rc1, Rc2 = x_actual[:, 0], x_actual[:, 1], x_actual[:, 2], x_actual[:, 3]
+    Rf, beta = theta_actual[:, 0], theta_actual[:, 1]
     
     Vb1 = 12 * Rb2 / (Rb1 + Rb2)
     term1 = (Vb1 + 0.74) * beta * (Rc2 + 9)
@@ -45,22 +47,11 @@ def OTLcircuit_vec(x, theta):
     term4 = beta * (Rc2 + 9) + Rf
     
     Vm = (term1 / term2) + (term3 / term4)
-    return Vm.reshape(-1)
-
-def OTLcircuit_model(x, theta):
-    """Main model function matching LCGP interface"""
-    theta = tstd2theta(theta)
-    x = xstd2x(x)
-    p = x.shape[0]
-    n = theta.shape[0]
-
-    theta_stacked = np.repeat(theta, repeats=p, axis=0)
-    x_stacked = np.tile(x.astype(float), (n, 1))
-
-    f = OTLcircuit_vec(x_stacked, theta_stacked).reshape((n, p))
-    return f.T
+    
+    return Vm.reshape(-1, 1)
 
 def OTLcircuit_true(x):
-    """True function at default theta = [0.5, 0.5]"""
-    theta0 = np.atleast_2d(np.array([0.5] * 2))
-    return OTLcircuit_model(x, theta0)
+    n = x.shape[0]
+    theta0 = np.tile([0.5, 0.5], (n, 1))  
+    result = OTLcircuit_model(x, theta0)
+    return result

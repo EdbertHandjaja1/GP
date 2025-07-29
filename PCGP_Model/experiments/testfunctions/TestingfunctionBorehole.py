@@ -10,52 +10,59 @@ def query_func_meta():
     }
 
 def tstd2theta(tstd, hard=True):
-    if tstd.ndim < 1.5:
-        tstd = tstd[:, None].T
-    (Treffs, Hus, LdKw, powparams) = np.split(tstd, tstd.shape[1], axis=1)
+    if tstd.ndim == 1:
+        tstd = tstd.reshape(1, -1)
+    
+    Treffs, Hus, LdKw, powparams = tstd[:, 0], tstd[:, 1], tstd[:, 2], tstd[:, 3]
 
-    Treff = (0.5 - 0.05) * Treffs + 0.05
-    Hu = Hus * (1110 - 990) + 990
+    Treff = (0.5 - 0.05) * Treffs + 0.05  
+    Hu = Hus * (1110 - 990) + 990      
+    
     if hard:
         Ld_Kw = LdKw * (1680 / 1500 - 1120 / 15000) + 1120 / 15000
     else:
         Ld_Kw = LdKw * (1680 / 9855 - 1120 / 12045) + 1120 / 12045
 
-    powparam = powparams * (0.5 - (-0.5)) + (-0.5)
+    powparam = powparams * (0.5 - (-0.5)) + (-0.5)  
 
-    return np.hstack((Hu, Ld_Kw, Treff, powparam))
+    return np.column_stack((Hu, Ld_Kw, Treff, powparam))
 
 def xstd2x(xstd):
-    if xstd.ndim < 1.5:
-        xstd = xstd[:, None].T
-    (rws, Hls) = np.split(xstd, xstd.shape[1], axis=1)
+    if xstd.ndim == 1:
+        xstd = xstd.reshape(1, -1)
+    
+    rws, Hls = xstd[:, 0], xstd[:, 1]
 
     rw = rws * (np.log(0.5) - np.log(0.05)) + np.log(0.05)
-    rw = np.exp(rw)
-    Hl = Hls * (820 - 700) + 700
+    rw = np.exp(rw) 
+    Hl = Hls * (820 - 700) + 700 
 
-    return np.hstack((rw, Hl))
-
-def borehole_vec(x, theta):
-    (Hu, Ld_Kw, Treff, powparam) = np.split(theta, theta.shape[1], axis=1)
-    (rw, Hl) = np.split(x, x.shape[1], axis=1)
-    numer = 2 * np.pi * (Hu - Hl)
-    denom1 = 2 * Ld_Kw / rw ** 2
-    denom2 = Treff
-    return ((numer / ((denom1 + denom2))) * np.exp(powparam * rw)).reshape(-1)
+    return np.column_stack((rw, Hl))
 
 def borehole_model(x, theta):
-    theta = tstd2theta(theta)
-    x = xstd2x(x)
-    p = x.shape[0]
-    n = theta.shape[0]
-
-    theta_stacked = np.repeat(theta, repeats=p, axis=0)
-    x_stacked = np.tile(x.astype(float), (n, 1))
-
-    f = borehole_vec(x_stacked, theta_stacked).reshape((n, p))
-    return f.T
+    theta_actual = tstd2theta(theta)
+    x_actual = xstd2x(x)
+    
+    n = x_actual.shape[0]
+    
+    rw = x_actual[:, 0]    
+    Hl = x_actual[:, 1]   
+    Hu = theta_actual[:, 0]     
+    Ld_Kw = theta_actual[:, 1]   
+    Treff = theta_actual[:, 2]  
+    powparam = theta_actual[:, 3] 
+    
+    numer = 2 * np.pi * (Hu - Hl)
+    denom1 = 2 * Ld_Kw / (rw ** 2)
+    denom2 = Treff
+    
+    flow_rate = (numer / (denom1 + denom2)) * np.exp(powparam * rw)
+    
+    return flow_rate.reshape(-1, 1)
 
 def borehole_true(x):
-    theta0 = np.atleast_2d(np.array([0.5] * 4))
-    return borehole_model(x, theta0)
+    """True borehole function with theta = [0.5, 0.5, 0.5, 0.5]"""
+    n = x.shape[0]
+    theta0 = np.tile([0.5, 0.5, 0.5, 0.5], (n, 1))  
+    result = borehole_model(x, theta0)
+    return result
