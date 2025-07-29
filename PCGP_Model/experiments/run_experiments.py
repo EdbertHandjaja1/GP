@@ -15,7 +15,7 @@ outputdir = r'experiments/output/'
 pathlib.Path(outputdir).mkdir(exist_ok=True)
 
 output_dims = [1]
-ns = [200, 600, 1000]
+ns = [500, 1000, 1500]
 # test_functions = ['borehole', 'otlcircuit', 'piston']
 test_functions = ['borehole']
 ntest = 150
@@ -57,13 +57,13 @@ def generate_data_for_rep(rep, ns, function, ntest, noise_level):
     theta_train_full = np.random.uniform(0, 1, (max_n, meta['thetadim']))
     X_train_full = np.random.uniform(0, 1, (max_n, meta['xdim']))
     Y_train_full = func_caller.info['nofailmodel'](X_train_full, theta_train_full)
-    Y_train_full += noise_level * np.std(Y_train_full, axis=0, keepdims=True) * np.random.randn(*Y_train_full.shape)
+    Y_train_full += noise_level * np.std(Y_train_full) * np.random.randn(*Y_train_full.shape)
     
     # test data
     X_test = np.random.uniform(0, 1, (ntest, meta['xdim']))
     theta_test = np.random.uniform(0, 1, (ntest, meta['thetadim']))
     Y_test_true = func_caller.info['nofailmodel'](X_test, theta_test)
-    Y_test_noisy = Y_test_true + noise_level * np.std(Y_test_true, axis=0, keepdims=True) * np.random.randn(*Y_test_true.shape)
+    Y_test_noisy = Y_test_true + noise_level * np.std(Y_test_true) * np.random.randn(*Y_test_true.shape)
     
     return {
         'seed': seed,
