@@ -91,8 +91,70 @@ def plot_results(results_filepath='experiments/output/numerical_results.csv', pl
     
     plt.show()
 
+def plot_rmse_boxplots(results_filepath='experiments/output/numerical_results.csv', 
+                      plot_output_dir='experiments/output/'):
+    """
+    Creates a single box plot showing RMSE distributions for PCGP vs Surmise across different sample sizes.
+    """
+    df = pd.read_csv(results_filepath)
+    
+    os.makedirs(plot_output_dir, exist_ok=True)
+    
+    plt.style.use('seaborn-v0_8-whitegrid')
+    
+    sample_sizes = sorted(df['n_train'].unique())
+    
+    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+    
+    box_data = []
+    box_labels = []
+    box_colors = []
+    
+    colors = {'PCGP': 'lightblue', 'Surmise': 'lightgreen'}
+    
+    for n in sample_sizes:
+        subset = df[df['n_train'] == n]
+        
+        pcgp_data = subset[subset['model'] == 'PCGP']['rmse']
+        surmise_data = subset[subset['model'] == 'Surmise']['rmse']
+        
+        box_data.extend([pcgp_data, surmise_data])
+        box_labels.extend([f'PCGP\nn={n}', f'Surmise\nn={n}'])
+        box_colors.extend([colors['PCGP'], colors['Surmise']])
+    
+    boxprops = dict(linestyle='-', linewidth=1.5)
+    medianprops = dict(linestyle='-', linewidth=2, color='firebrick')
+    bp = ax.boxplot(box_data,
+                   patch_artist=True,
+                   labels=box_labels,
+                   boxprops=boxprops,
+                   medianprops=medianprops,
+                   widths=0.6)
+    
+    for patch, color in zip(bp['boxes'], box_colors):
+        patch.set_facecolor(color)
+    
+    for i in range(1, len(sample_sizes)):
+        ax.axvline(x=i*2 + 0.5, color='gray', linestyle=':', alpha=0.5)
+    
+    ax.set_ylabel('RMSE', fontsize=12)
+    ax.set_xlabel('Model and Sample Size', fontsize=12)
+    ax.set_title('RMSE Distribution Comparison: PCGP vs Surmise Across Sample Sizes', fontsize=14)
+    ax.set_yscale('log')
+    ax.grid(True, which="both", ls="-", alpha=0.3)
+    
+    plt.xticks(rotation=45, ha='right')
+    
+    plt.tight_layout()
+    
+    plot_filename = os.path.join(plot_output_dir, 'rmse_boxplots_combined.png')
+    plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+    print(f"Combined box plots saved to {plot_filename}")
+    
+    plt.show()
+
 if __name__ == "__main__":
     results_file = 'experiments/output/numerical_results_20250729_154234.csv'
     plot_output_directory = 'experiments/output/'
-    plot_results(results_file, plot_output_directory)
-
+    # plot_results(results_file, plot_output_directory)
+    plot_rmse_boxplots(results_file, plot_output_directory)
