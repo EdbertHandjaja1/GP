@@ -153,8 +153,157 @@ def plot_rmse_boxplots(results_filepath='experiments/output/numerical_results.cs
     
     plt.show()
 
+def plot_rmse_boxplots_normalized(results_filepath='experiments/output/numerical_results.csv', 
+                                plot_output_dir='experiments/output/'):
+    df = pd.read_csv(results_filepath)
+    
+    os.makedirs(plot_output_dir, exist_ok=True)
+    
+    plt.style.use('seaborn-v0_8-whitegrid')
+    
+    df_normalized = df.copy()
+    for func in df['function'].unique():
+        func_mask = df['function'] == func
+        mean_rmse = df[func_mask]['rmse'].mean()
+        df_normalized.loc[func_mask, 'rmse_normalized'] = df.loc[func_mask, 'rmse'] / mean_rmse
+    
+    sample_sizes = sorted(df_normalized['n_train'].unique())
+    
+    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+    
+    box_data = []
+    box_labels = []
+    box_colors = []
+    
+    colors = {'PCGP': 'lightblue', 'Surmise': 'lightgreen'}
+    
+    for n in sample_sizes:
+        subset = df_normalized[df_normalized['n_train'] == n]
+        
+        pcgp_data = subset[subset['model'] == 'PCGP']['rmse_normalized']
+        surmise_data = subset[subset['model'] == 'Surmise']['rmse_normalized']
+        
+        box_data.extend([pcgp_data, surmise_data])
+        box_labels.extend([f'PCGP\nn={n}', f'Surmise\nn={n}'])
+        box_colors.extend([colors['PCGP'], colors['Surmise']])
+    
+    boxprops = dict(linestyle='-', linewidth=1.5)
+    medianprops = dict(linestyle='-', linewidth=2, color='firebrick')
+    bp = ax.boxplot(box_data,
+                   patch_artist=True,
+                   labels=box_labels,
+                   boxprops=boxprops,
+                   medianprops=medianprops,
+                   widths=0.6)
+    
+    for patch, color in zip(bp['boxes'], box_colors):
+        patch.set_facecolor(color)
+    
+    for i in range(1, len(sample_sizes)):
+        ax.axvline(x=i*2 + 0.5, color='gray', linestyle=':', alpha=0.5)
+    
+    ax.axhline(y=1.0, color='red', linestyle='--', alpha=0.7, label='Mean RMSE across functions')
+    
+    ax.set_ylabel('Normalized RMSE (relative to function mean)', fontsize=12)
+    ax.set_xlabel('Model and Sample Size', fontsize=12)
+    ax.set_title('Normalized RMSE Distribution: PCGP vs Surmise Across Sample Sizes', fontsize=14)
+    ax.set_yscale('log')
+    ax.grid(True, which="both", ls="-", alpha=0.3)
+    ax.legend()
+    
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    
+    plot_filename = os.path.join(plot_output_dir, 'rmse_boxplots_normalized.png')
+    plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+    print(f"Normalized RMSE box plots saved to {plot_filename}")
+    
+    plt.show()
+
+def plot_rmse_boxplots_by_function(results_filepath='experiments/output/numerical_results.csv', 
+                                 plot_output_dir='experiments/output/'):
+    df = pd.read_csv(results_filepath)
+    
+    os.makedirs(plot_output_dir, exist_ok=True)
+    
+    plt.style.use('seaborn-v0_8-whitegrid')
+    
+    test_functions = sorted(df['function'].unique())
+    sample_sizes = sorted(df['n_train'].unique())
+    
+    n_functions = len(test_functions)
+    n_cols = min(3, n_functions)  
+    n_rows = (n_functions + n_cols - 1) // n_cols  
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 5*n_rows))
+    
+    if n_functions == 1:
+        axes = [axes]
+    elif n_rows == 1:
+        axes = axes if n_functions > 1 else [axes]
+    else:
+        axes = axes.flatten()
+    
+    colors = {'PCGP': 'lightblue', 'Surmise': 'lightgreen'}
+    
+    for i, func in enumerate(test_functions):
+        ax = axes[i]
+        func_data = df[df['function'] == func]
+        
+        box_data = []
+        box_labels = []
+        box_colors = []
+        
+        for n in sample_sizes:
+            subset = func_data[func_data['n_train'] == n]
+            
+            pcgp_data = subset[subset['model'] == 'PCGP']['rmse']
+            surmise_data = subset[subset['model'] == 'Surmise']['rmse']
+            
+            box_data.extend([pcgp_data, surmise_data])
+            box_labels.extend([f'PCGP\nn={n}', f'Surmise\nn={n}'])
+            box_colors.extend([colors['PCGP'], colors['Surmise']])
+        
+        boxprops = dict(linestyle='-', linewidth=1.5)
+        medianprops = dict(linestyle='-', linewidth=2, color='firebrick')
+        bp = ax.boxplot(box_data,
+                       patch_artist=True,
+                       labels=box_labels,
+                       boxprops=boxprops,
+                       medianprops=medianprops,
+                       widths=0.6)
+        
+        for patch, color in zip(bp['boxes'], box_colors):
+            patch.set_facecolor(color)
+        
+        for j in range(1, len(sample_sizes)):
+            ax.axvline(x=j*2 + 0.5, color='gray', linestyle=':', alpha=0.5)
+        
+        ax.set_ylabel('RMSE', fontsize=11)
+        ax.set_xlabel('Model and Sample Size', fontsize=11)
+        ax.set_title(f'RMSE Distribution - {func}', fontsize=12, fontweight='bold')
+        ax.set_yscale('log')
+        ax.grid(True, which="both", ls="-", alpha=0.3)
+        
+        plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+    
+    for i in range(len(test_functions), len(axes)):
+        axes[i].set_visible(False)
+    
+    plt.tight_layout()
+    
+    plot_filename = os.path.join(plot_output_dir, 'rmse_boxplots_by_function.png')
+    plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+    print(f"Function-specific RMSE box plots saved to {plot_filename}")
+    
+    plt.show()
+
 if __name__ == "__main__":
     results_file = 'experiments/output/numerical_results_20250729_154234.csv'
     plot_output_directory = 'experiments/output/'
-    # plot_results(results_file, plot_output_directory)
-    plot_rmse_boxplots(results_file, plot_output_directory)
+    
+    plot_rmse_boxplots_normalized(results_file, plot_output_directory)
+    
+    plot_rmse_boxplots_by_function(results_file, plot_output_directory)
+    
+
