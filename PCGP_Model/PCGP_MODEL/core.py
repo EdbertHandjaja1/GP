@@ -37,7 +37,8 @@ class PrincipalComponentGaussianProcessModel:
         self.Y_train = None
         self.X_train_std = None
         self.Y_train_std = None
-        self.rho = np.ones((n_components, input_dim)) * 0.1
+        # NumPy as they are updated by scipy's optimize
+        self.rho = np.ones((n_components, input_dim)) * 0.1 
         self.lambda_w = np.ones(n_components) * 1.0
         self.noise_var = 1e-3
         
@@ -56,14 +57,18 @@ class PrincipalComponentGaussianProcessModel:
         return False
     
     def _compute_and_store_matrices(self):
-        """Compute and store all kernel matrices and Cholesky decompositions."""
+        """
+        Compute and store all kernel matrices and Cholesky decompositions.
+        All calculations are performed using TensorFlow.
+        """
         n = self.X_train_std.shape[0]
         X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
         
         for k in range(self.n_components):
-            variance = 1.0 / self.lambda_w[k]
-            rho = self.rho[k, :]
-            kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
+            # Ensure hyperparameters are passed as TF tensors or converted internally by GaussianKernel
+            variance_tf = tf.constant(1.0 / self.lambda_w[k], dtype=tf.float64)
+            rho_tf = tf.constant(self.rho[k, :], dtype=tf.float64)
+            kernel = GaussianKernel(variance=variance_tf, rho=rho_tf, input_dim=self.input_dim)
             K_k = kernel(X_train_tf, X_train_tf)
             self._stored_kernels[k] = K_k
             
@@ -71,12 +76,12 @@ class PrincipalComponentGaussianProcessModel:
             self._stored_sigma[k] = Sigma_k
             
             L_k = tf.linalg.cholesky(Sigma_k)
-            
             self._stored_cholesky[k] = L_k
 
     def standardize_inputs(self, X, ranges):
         """
         Standardizes input data X to the range [0, 1] based on provided min/max ranges.
+        Uses NumPy for initial data manipulation.
 
         Arguments:
             X (np.ndarray): The input data to be standardized. Shape (n_samples, input_dim).
@@ -92,13 +97,14 @@ class PrincipalComponentGaussianProcessModel:
         mins = ranges[:, 0]
         maxs = ranges[:, 1]
         ranges_width = maxs - mins
-        ranges_width[ranges_width == 0] = 1.0
+        ranges_width[ranges_width == 0] = 1.0 # Avoid division by zero
         X_standardized = (X - mins) / ranges_width
         return np.clip(X_standardized, 0.0, 1.0)
 
     def _standardize_output(self, Y):
         """
         Standardizes the output data Y by centering and scaling.
+        Uses NumPy for initial data manipulation.
 
         Arguments:
             Y (np.ndarray): The output data to be standardized. Shape (n_samples, output_dim).
@@ -106,15 +112,17 @@ class PrincipalComponentGaussianProcessModel:
         Output:
             np.ndarray: The standardized output data. Shape (n_samples, output_dim).
         """
-
         self.standardization_mean = np.mean(Y, axis=0)
         Y_centered = Y - self.standardization_mean
         self.standardization_scale = np.sqrt(np.mean(Y_centered ** 2, axis=0))
+        # Handle cases where scale might be zero (e.g., constant output dimension)
+        self.standardization_scale[self.standardization_scale == 0] = 1.0 
         return Y_centered / self.standardization_scale
 
     def _unstandardize_output(self, Y_standardized):
         """
         Unstandardizes the output data Y_standardized using the previously stored mean and scale.
+        Uses NumPy for data manipulation.
 
         Arguments:
             Y_standardized (np.ndarray): The standardized output data to be unstandardized.
@@ -128,6 +136,7 @@ class PrincipalComponentGaussianProcessModel:
     def compute_principal_components(self, Y_standardized):
         """
         Computes the principal component weights and basis vectors from standardized output data.
+        Uses TensorFlow for SVD.
 
         Arguments:
             Y_standardized (tf.Tensor or np.ndarray): The standardized training output data.
@@ -140,25 +149,33 @@ class PrincipalComponentGaussianProcessModel:
                 - phi_basis (np.ndarray): The principal component basis vectors.
                                           Shape (output_dim, n_components).
         """
+        # Ensure Y_standardized is a TensorFlow tensor
         y_tensor = tf.convert_to_tensor(Y_standardized, dtype=tf.float64)
         
         n = tf.cast(tf.shape(y_tensor)[0], dtype=tf.float64) 
-        m = tf.cast(tf.shape(y_tensor)[1], dtype=tf.float64) 
         s, u, v = tf.linalg.svd(y_tensor, full_matrices=False)
         q = self.n_components
         
+        # Calculate weights based on formula (1 / sqrt(n)) * U * S_q
         weights_raw = (1 / tf.sqrt(n)) * tf.matmul(u, tf.linalg.diag(s))[:, :q]
         
+        # Calculate standard deviations of the raw weights for scaling
         std_devs = tf.math.reduce_std(weights_raw, axis=0)
+        # Avoid division by zero if a std_dev is 0
+        std_devs = tf.where(std_devs > 1e-6, std_devs, 1.0)
         
+        # Scale weights to have unit standard deviation
         weights = weights_raw / std_devs  # (n x q)
+        
+        # Calculate basis vectors based on formula sqrt(n) * V_q * S_devs
         phi_basis = tf.sqrt(n) * tf.matmul(v[:, :q], tf.linalg.diag(std_devs))  # (m x q)
         
-        return weights.numpy(), phi_basis.numpy()
+        return weights.numpy(), phi_basis.numpy() # Convert back to NumPy for storage
 
     def _build_kernel_matrix(self, X1, X2=None, component_idx=None):
         """
         Computes a Gaussian Kernel covariance matrix for given input data.
+        Uses TensorFlow for kernel computation.
 
         Arguments:
             X1 (tf.Tensor or np.ndarray): The first set of input points. Shape (n1, input_dim).
@@ -173,26 +190,34 @@ class PrincipalComponentGaussianProcessModel:
                        - If `component_idx` is None: Shape (n1 * n_components, n2 * n_components)
                                                      (block-diagonal).
         """
-        if X2 is None:
-            X2 = X1
+        # Ensure inputs are TensorFlow tensors
+        X1_tf = tf.convert_to_tensor(X1, dtype=tf.float64)
+        X2_tf = tf.convert_to_tensor(X2, dtype=tf.float64) if X2 is not None else X1_tf
 
         if component_idx is not None:
-            variance = 1.0 / self.lambda_w[component_idx]
-            rho = self.rho[component_idx, :]
-            kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
-            return kernel(X1, X2)
+            variance_tf = tf.constant(1.0 / self.lambda_w[component_idx], dtype=tf.float64)
+            rho_tf = tf.constant(self.rho[component_idx, :], dtype=tf.float64)
+            kernel = GaussianKernel(variance=variance_tf, rho=rho_tf, input_dim=self.input_dim)
+            return kernel(X1_tf, X2_tf)
         else:
-            K_blocks = []
+            # Build block-diagonal matrix using TensorFlow's LinearOperatorBlockDiag
+            # This path is not actively used in the optimized NLL/predict, but converted for consistency.
+            block_operators = []
             for i in range(self.n_components):
-                variance = 1.0 / self.lambda_w[i]
-                rho = self.rho[i, :]
-                kernel = GaussianKernel(variance=variance, rho=rho, input_dim=self.input_dim)
-                K_blocks.append(kernel(X1, X2))
-            return scipy.linalg.block_diag(*K_blocks)
+                variance_tf = tf.constant(1.0 / self.lambda_w[i], dtype=tf.float64)
+                rho_tf = tf.constant(self.rho[i, :], dtype=tf.float64)
+                kernel = GaussianKernel(variance=variance_tf, rho=rho_tf, input_dim=self.input_dim)
+                block_operators.append(tf.linalg.LinearOperatorFullMatrix(kernel(X1_tf, X2_tf)))
+            
+            # Combine into a block diagonal operator and convert to dense tensor
+            block_diag_op = tf.linalg.LinearOperatorBlockDiag(block_operators)
+            return block_diag_op.to_dense()
 
     def _negative_log_marginal_likelihood(self, rho_flattened, lambda_w, noise_var):
         """
         Calculate the negative log marginal likelihood for PCGP model using stored matrices.
+        This method retains NumPy/SciPy integration for the optimization interface,
+        but uses TensorFlow for core likelihood calculations.
 
         Args:
             rho_flattened (np.ndarray): Flattened array of length scales (n_components * input_dim)
@@ -202,20 +227,21 @@ class PrincipalComponentGaussianProcessModel:
         Returns:
             float: Negative log marginal likelihood value
         """
+        # Update model parameters (these are NumPy arrays)
         self.rho = np.reshape(rho_flattened, (self.n_components, self.input_dim))
         self.lambda_w = lambda_w
         self.noise_var = noise_var
         
+        # Recompute and store matrices if hyperparameters have changed
         if self._hyperparams_changed(rho_flattened, lambda_w, noise_var):
             self._compute_and_store_matrices()
 
         n = self.X_train_std.shape[0]
-        total_nll = 0
+        total_nll = tf.constant(0.0, dtype=tf.float64) # Accumulator for total NLL
 
         for k in range(self.n_components):
             w_k = tf.constant(self.weights[:, k:k+1], dtype=tf.float64)
             
-            # Use stored matrices
             L_k = self._stored_cholesky[k]
 
             # term 1
@@ -226,16 +252,17 @@ class PrincipalComponentGaussianProcessModel:
             log_det_k = 2.0 * tf.reduce_sum(tf.math.log(tf.linalg.diag_part(L_k)))
 
             # term 3
-            constant = n * np.log(2.0 * np.pi)
+            constant = n * np.log(2.0 * np.pi) 
 
             nll_k = 0.5 * (data_fit_k + log_det_k + constant)
             total_nll += nll_k
 
-        return tf.cast(total_nll, dtype=tf.float64).numpy()
+        return total_nll.numpy() 
 
     def fit(self, X_train, Y_train, ranges):
         """
         Fits the PCGP model to training data by optimizing hyperparameters.
+        Uses SciPy's minimize for optimization, thus retaining NumPy.
 
         Arguments:
             X_train (np.ndarray): The training input data. Shape (n_train_samples, input_dim).
@@ -252,13 +279,14 @@ class PrincipalComponentGaussianProcessModel:
         self.Y_train_std = self._standardize_output(Y_train)
         self.weights, self.phi_basis = self.compute_principal_components(self.Y_train_std)
         
-        self._last_hyperparams = None
+        self._last_hyperparams = None 
         
         iteration_count = [0]
         
         def objective(params):
             """
             Objective function for scipy.optimize.minimize.
+            This function unwraps parameters, calls the TensorFlow-backed NLL, and handles logging.
             """
             iteration_count[0] += 1
             
@@ -268,6 +296,7 @@ class PrincipalComponentGaussianProcessModel:
             
             nll = self._negative_log_marginal_likelihood(rho_flattened, lambda_w, noise_var)
             
+            # optional: print progress every 10 iterations
             # if iteration_count[0] % 10 == 0:
             #     print(f"Iteration {iteration_count[0]}: NLL = {nll:.6f}, noise_var = {noise_var:.6f}")
             #     print(f"  Sample rho: {rho_flattened[:3]}")
@@ -287,9 +316,9 @@ class PrincipalComponentGaussianProcessModel:
 
         bounds = []
         for _ in range(self.n_components * self.input_dim):
-            bounds.append((-10, 5))  
+            bounds.append((-10, 5)) 
         for _ in range(self.n_components):
-            bounds.append((-10, 5))  
+            bounds.append((-10, 5)) 
         bounds.append((-15, 0))  
 
         result = minimize(
@@ -297,7 +326,7 @@ class PrincipalComponentGaussianProcessModel:
             x0=initial_params_flat,
             method='L-BFGS-B',
             bounds=bounds,
-            options={'disp': True}
+
         )
         
         print(f"Optimization completed in {iteration_count[0]} iterations")
@@ -320,6 +349,7 @@ class PrincipalComponentGaussianProcessModel:
     def predict(self, X_new, ranges, return_std=False, debug=True):
         """
         Makes predictions using the fitted PCGP model with stored matrices.
+        All calculations here use TensorFlow.
 
         Arguments:
             X_new (np.ndarray): The new input data for which to make predictions.
@@ -339,23 +369,22 @@ class PrincipalComponentGaussianProcessModel:
         X_new_tf = tf.convert_to_tensor(X_new_std, dtype=tf.float64)
         X_train_tf = tf.convert_to_tensor(self.X_train_std, dtype=tf.float64)
         
-        n_train = self.X_train_std.shape[0]
         n_test = X_new_std.shape[0]
         
-        mu_g = np.zeros((n_test, self.n_components))
+        mu_g = tf.zeros((n_test, self.n_components), dtype=tf.float64)
         
-        var_y_std = np.zeros((n_test, self.output_dim)) 
+        var_y_std = tf.zeros((n_test, self.output_dim), dtype=tf.float64) 
 
         for k in range(self.n_components):
             w_k = tf.constant(self.weights[:, k:k+1], dtype=tf.float64)
-            phi_k = tf.constant(self.phi_basis[:, k:k+1], dtype=tf.float64)
             
             L_k = self._stored_cholesky[k]
+            
             k_star = self._build_kernel_matrix(X_new_tf, X_train_tf, component_idx=k)
             
             alpha_k = tf.linalg.cholesky_solve(L_k, w_k)
             mu_k = tf.matmul(k_star, alpha_k)
-            mu_g[:, k] = tf.squeeze(mu_k).numpy()
+            mu_g = tf.tensor_scatter_nd_update(mu_g, [[i, k] for i in range(n_test)], tf.squeeze(mu_k))
             
             if return_std:
                 k_star_star = self._build_kernel_matrix(X_new_tf, component_idx=k)
@@ -363,12 +392,13 @@ class PrincipalComponentGaussianProcessModel:
 
                 Cov_k = k_star_star - tf.matmul(k_star, v_k)
 
-                diag_Cov_k = tf.linalg.diag_part(Cov_k).numpy() 
+                diag_Cov_k = tf.linalg.diag_part(Cov_k) 
 
-                var_contrib_k = np.outer(diag_Cov_k, self.phi_basis[:, k]**2) 
+                phi_basis_k_tf = tf.constant(self.phi_basis[:, k], dtype=tf.float64) 
+                var_contrib_k = tf.expand_dims(diag_Cov_k, axis=-1) * tf.square(tf.expand_dims(phi_basis_k_tf, axis=0))
                 var_y_std += var_contrib_k
 
-        phi_tf = tf.convert_to_tensor(self.phi_basis, dtype=tf.float64)
+        phi_tf = tf.constant(self.phi_basis, dtype=tf.float64) 
         mu_y_std = tf.matmul(mu_g, phi_tf, transpose_b=True)
         mean_y = self._unstandardize_output(mu_y_std.numpy())
         
@@ -377,7 +407,8 @@ class PrincipalComponentGaussianProcessModel:
         
         var_y_std += self.noise_var 
 
-        var_y = var_y_std * (self.standardization_scale ** 2)
-        std_y = np.sqrt(var_y)
+        standardization_scale_tf = tf.constant(self.standardization_scale, dtype=tf.float64) 
+        var_y = var_y_std * tf.square(standardization_scale_tf)
+        std_y = tf.sqrt(tf.maximum(var_y, 0.0)) 
         
-        return mean_y, std_y
+        return mean_y, std_y.numpy() 

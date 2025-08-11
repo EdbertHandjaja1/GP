@@ -79,3 +79,6 @@ def generate_test_data(n_train=50, n_test=200, input_dim=3, output_dim=5,
     Y_test = true_func(X_test) 
     
     return X_train, Y_train, X_test, Y_test, ranges, true_func 
+
+
+
