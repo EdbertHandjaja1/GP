@@ -381,4 +381,3 @@ class PrincipalComponentGaussianProcessModel:
         std_y = np.sqrt(var_y)
         
         return mean_y, std_y
-    
